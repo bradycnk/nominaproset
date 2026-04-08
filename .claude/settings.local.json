@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(start:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(node:*)",
+      "Bash(claude mcp:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_fill_form",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_select_option",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(node -e \"require\\(''playwright''\\)\")",
+      "Bash(npx playwright:*)",
+      "mcp__playwright__browser_resize",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_wait_for",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(cmd /c \"taskkill /F /IM node.exe\")",
+      "Bash(cmd /c \"taskkill /F /IM node.exe && echo OK\")",
+      "Bash(cmd /c \"tasklist | findstr node.exe\")",
+      "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --win --dir 2>&1)"
+    ]
+  }
+}
