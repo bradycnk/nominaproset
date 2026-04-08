@@ -926,7 +926,7 @@ const PayrollProcessor: React.FC<{
     let isFirstPage = true;
     const adelantosAplicadosGlobal: Array<{ id: string; tipo: 'adelanto_nomina' | 'prestamo_credito'; deducted: number; newSaldo: number }> = [];
 
-    const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+    const filteredEmps = employees.filter(emp => (selectedBranchId ? emp.sucursal_id === selectedBranchId : true) && !excludedEmployees[emp.id]);
 
     for (const emp of filteredEmps) {
         if (!isFirstPage) {
@@ -1011,7 +1011,7 @@ const PayrollProcessor: React.FC<{
     let grandTotalDeduc = 0;
     let grandTotalNeto = 0;
 
-    const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+    const filteredEmps = employees.filter(emp => (selectedBranchId ? emp.sucursal_id === selectedBranchId : true) && !excludedEmployees[emp.id]);
 
     for (const emp of filteredEmps) {
       const breakdown = getPayrollBreakdown(emp);
@@ -1295,7 +1295,7 @@ const PayrollProcessor: React.FC<{
     doc.text(`Período: ${fechaDesde} al ${fechaHasta}`, pageWidth - 15, 28, { align: "right" });
     doc.text(`Fecha de Emisión: ${new Date().toLocaleDateString('es-VE')}`, pageWidth - 15, 34, { align: "right" });
 
-    const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+    const filteredEmps = employees.filter(emp => (selectedBranchId ? emp.sucursal_id === selectedBranchId : true) && !excludedEmployees[emp.id]);
     const rows: any[] = [];
     let sumAsign = 0;
     let sumDeduc = 0;
@@ -2386,6 +2386,23 @@ const PayrollProcessor: React.FC<{
         <table className="w-full text-sm text-left">
           <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest border-b">
             <tr>
+              <th className="px-3 py-4 text-center w-10">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                  title="Seleccionar/Deseleccionar todos"
+                  checked={(() => {
+                    const filtered = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+                    return filtered.length > 0 && filtered.every(emp => !excludedEmployees[emp.id]);
+                  })()}
+                  onChange={(e) => {
+                    const filtered = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+                    const newExcluded = { ...excludedEmployees };
+                    filtered.forEach(emp => { newExcluded[emp.id] = !e.target.checked; });
+                    setExcludedEmployees(newExcluded);
+                  }}
+                />
+              </th>
               <th className="px-6 py-4">Empleado</th>
               <th className="px-6 py-4 text-center">Saldo Préstamos</th>
               <th className="px-6 py-4 text-center">Asignaciones</th>
@@ -2406,8 +2423,19 @@ const PayrollProcessor: React.FC<{
                 
                 if (!breakdown) return null;
 
+                const isExcluded = excludedEmployees[emp.id] || false;
+
                 return (
-                  <tr key={emp.id} className={`hover:bg-slate-50 transition-colors ${isClosed ? 'bg-slate-50/30' : ''}`}>
+                  <tr key={emp.id} className={`hover:bg-slate-50 transition-colors ${isClosed ? 'bg-slate-50/30' : ''} ${isExcluded ? 'opacity-40' : ''}`}>
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                        checked={!isExcluded}
+                        onChange={() => setExcludedEmployees(prev => ({ ...prev, [emp.id]: !isExcluded }))}
+                        title={isExcluded ? 'Incluir en recibos' : 'Excluir de recibos'}
+                      />
+                    </td>
                     <td className="px-6 py-4 cursor-pointer group/name" onClick={() => setSelectedDetailEmployeeId(emp.id)}>
                         <div className="font-bold text-slate-700 group-hover/name:text-emerald-600 transition-colors">{emp.nombre} {emp.apellido}</div>
                         <div className="text-xs text-slate-400 font-medium">C.I. {emp.cedula}</div>
@@ -2493,8 +2521,9 @@ const PayrollProcessor: React.FC<{
           <tfoot>
             {(() => {
               const filtered = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+              const included = filtered.filter(emp => !excludedEmployees[emp.id]);
               let totalAsig = 0, totalDed = 0, totalNeto = 0;
-              filtered.forEach(emp => {
+              included.forEach(emp => {
                 if (!config) return;
                 const snapshot = nominasCerradas.find(n => n.empleado_id === emp.id);
                 const breakdown = snapshot ? snapshot.detalles_calculo : getPayrollBreakdown(emp);
@@ -2505,8 +2534,8 @@ const PayrollProcessor: React.FC<{
               });
               return (
                 <tr className="bg-slate-900 text-white border-t-2 border-slate-700">
-                  <td colSpan={2} className="px-6 py-4 font-black text-sm">
-                    Totales — {filtered.length} empleados
+                  <td colSpan={3} className="px-6 py-4 font-black text-sm">
+                    Totales — {included.length} de {filtered.length} empleados
                   </td>
                   <td className="px-6 py-4 text-center font-black text-emerald-400">
                     + {totalAsig.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
