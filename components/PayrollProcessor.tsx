@@ -464,15 +464,20 @@ const PayrollProcessor: React.FC<{
 
     const domingoLaborado = presentRecords.filter((att) => new Date(`${att.fecha}T00:00:00`).getDay() === 0).length;
     const sabadoLaborado = presentRecords.filter((att) => new Date(`${att.fecha}T00:00:00`).getDay() === 6).length;
-    const descansoLaborado = presentRecords.filter((att) => {
-      const day = new Date(`${att.fecha}T00:00:00`).getDay();
-      return day === 0 || day === 6;
-    }).length;
-    const turnosLaborados = presentRecords.length;
+
+    // Horas de jornada mixta: solo las horas nocturnas de turnos clasificados como Mixta
     const bonoJornadaMixta = presentRecords.reduce((sum, att) => {
       const shift = calculateDetailedShift(att.hora_entrada || '', att.hora_salida || '', att.fecha);
       return shift.shiftType === 'Mixta' ? sum + shift.nightHours : sum;
     }, 0);
+
+    // Días de descanso: estándar 4 por quincena, ajustados si hay datos de asistencia
+    const diasDescansoCount = hoursData.diasTrabajados > 0 ? Math.max(0, 15 - hoursData.diasTrabajados) : 4;
+
+    // Verificar si tiene adelantos/préstamos activos
+    const empAdelantos = adelantos.filter(a => a.empleado_id === emp.id && a.estado === 'aprobado');
+    const tieneAdelanto = empAdelantos.some(a => a.tipo === 'adelanto_nomina');
+    const tienePrestamo = empAdelantos.some(a => a.tipo === 'prestamo_credito');
 
     const withAutoValues = (key: keyof ReceiptPrintConfig, cantidad: number, montoUnitario: number) => ({
       ...baseConfig[key],
@@ -484,14 +489,20 @@ const PayrollProcessor: React.FC<{
     return {
       ...baseConfig,
       diasLaborados: withAutoValues('diasLaborados', hoursData.diasTrabajados, salarioDiario),
-      descansoLaborado: withAutoValues('descansoLaborado', descansoLaborado, salarioDiario * 1.5),
+      diasDescanso: { ...baseConfig.diasDescanso, enabled: diasDescansoCount > 0, cantidad: diasDescansoCount, montoUnitario: salarioDiario },
+      // descansoLaborado se deja deshabilitado: usamos sabadoLaborado y domingoLaborado por separado para evitar doble conteo
+      descansoLaborado: { ...baseConfig.descansoLaborado, enabled: false, cantidad: 0 },
       domingoLaborado: withAutoValues('domingoLaborado', domingoLaborado, salarioDiario * 1.5),
+      sabadoLaborado: withAutoValues('sabadoLaborado', sabadoLaborado, salarioDiario),
       horasExtrasDiurnas: withAutoValues('horasExtrasDiurnas', hoursData.totalExtraDiurna, salarioHora * 1.5),
       bonoNocturno: withAutoValues('bonoNocturno', hoursData.totalNightHours, salarioHora * 0.3),
-      turnosLaborados: withAutoValues('turnosLaborados', turnosLaborados, salarioDiario),
+      // turnosLaborados no se auto-habilita (no se usa en el cálculo LOTTT)
+      turnosLaborados: { ...baseConfig.turnosLaborados, enabled: false },
       bonoJornadaMixta: withAutoValues('bonoJornadaMixta', bonoJornadaMixta, salarioHora * 0.3),
       horasExtrasNocturnas: withAutoValues('horasExtrasNocturnas', hoursData.totalExtraNocturna, salarioHora * 1.95),
-      sabadoLaborado: withAutoValues('sabadoLaborado', sabadoLaborado, salarioDiario),
+      bonoAlimentacion: { ...baseConfig.bonoAlimentacion, enabled: hoursData.diasTrabajados > 0 || baseConfig.bonoAlimentacion.enabled },
+      adelantoNomina: { ...baseConfig.adelantoNomina, enabled: tieneAdelanto },
+      prestamo: { ...baseConfig.prestamo, enabled: tienePrestamo },
     };
   };
 
