@@ -13,16 +13,17 @@ const NIGHT_START = 19.0; // 7:00 PM
 const NIGHT_END = 5.0;   // 5:00 AM (Día siguiente)
 
 /**
- * Convierte formato HH:MM o ISO String a decimal (Ej: "08:30" o "2026-03-12T08:30:00Z" -> 8.5)
+ * Convierte formato HH:MM o ISO/Timestamp String a decimal (Ej: "08:30" -> 8.5, "2026-03-12T08:30:00Z" -> 8.5, "2026-03-12 08:30:00+00" -> 8.5)
  */
 export const timeToDecimal = (timeStr: string): number => {
   if (!timeStr) return 0;
-  
-  // Si es un ISO String (contiene 'T')
-  if (timeStr.includes('T')) {
-    const date = new Date(timeStr);
-    // Usamos hora local del sistema para coincidir con la entrada del usuario
-    return date.getHours() + (date.getMinutes() / 60);
+
+  // Si es un timestamp completo (contiene 'T' o formato "YYYY-MM-DD HH:MM")
+  if (timeStr.includes('T') || /^\d{4}-\d{2}-\d{2}\s/.test(timeStr)) {
+    const date = new Date(timeStr.replace(' ', 'T'));
+    if (!isNaN(date.getTime())) {
+      return date.getHours() + (date.getMinutes() / 60);
+    }
   }
 
   if (timeStr === '23:59') return 24.0;
@@ -48,17 +49,18 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
   let end = timeToDecimal(salida);
   let duration = 0;
   
-  // Manejo de turno con ISO Strings (Precisión máxima)
-  if (entrada.includes('T') && salida.includes('T')) {
-    const d1 = new Date(entrada);
-    const d2 = new Date(salida);
+  // Manejo de turno con ISO/Timestamp Strings (Precisión máxima)
+  const isTimestamp = (s: string) => s.includes('T') || /^\d{4}-\d{2}-\d{2}\s/.test(s);
+  if (isTimestamp(entrada) && isTimestamp(salida)) {
+    const d1 = new Date(entrada.replace(' ', 'T'));
+    const d2 = new Date(salida.replace(' ', 'T'));
     const diffMs = d2.getTime() - d1.getTime();
     duration = Math.max(0, diffMs / (1000 * 60 * 60));
     // Ajustamos 'end' para que las funciones de solapamiento funcionen bien (ej: 25h si pasó medianoche)
     end = start + duration;
   } else {
     // Formato HH:MM antiguo o mixto
-    if (end < start) end += 24; 
+    if (end < start) end += 24;
     duration = end - start;
   }
   const dateObj = new Date(fecha);
