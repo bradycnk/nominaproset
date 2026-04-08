@@ -38,3 +38,6 @@ create-user.zip
 
 # Archivos innecesarios
 innesesarios/
+
+# Electron build output
+release/
