@@ -240,6 +240,17 @@ const App: React.FC = () => {
   const isElectron = !!(window as any).electronAPI?.isElectron;
   const electronAPI = (window as any).electronAPI;
 
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
+
+  useEffect(() => {
+    if (!isElectron || !electronAPI) return;
+    electronAPI.onUpdateAvailable?.((version: string) => setUpdateVersion(version));
+    electronAPI.onUpdateProgress?.((percent: number) => setUpdateProgress(percent));
+    electronAPI.onUpdateDownloaded?.(() => { setUpdateReady(true); setUpdateProgress(null); });
+  }, [isElectron]);
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       {isElectron && (
@@ -269,6 +280,36 @@ const App: React.FC = () => {
               <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.2"><line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/></svg>
             </button>
           </div>
+        </div>
+      )}
+      {updateVersion && !updateReady && updateProgress === null && (
+        <div className="flex items-center justify-between bg-emerald-600 text-white px-4 py-2 text-sm shrink-0">
+          <span>Nueva version <strong>v{updateVersion}</strong> disponible</span>
+          <button
+            onClick={() => { setUpdateProgress(0); electronAPI?.downloadUpdate(); }}
+            className="bg-white text-emerald-700 px-3 py-1 rounded-lg text-xs font-bold hover:bg-emerald-50 transition-colors"
+          >
+            Descargar ahora
+          </button>
+        </div>
+      )}
+      {updateProgress !== null && !updateReady && (
+        <div className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2 text-sm shrink-0">
+          <span>Descargando actualizacion... {updateProgress}%</span>
+          <div className="flex-1 bg-blue-400 rounded-full h-2 max-w-xs">
+            <div className="bg-white rounded-full h-2 transition-all" style={{ width: `${updateProgress}%` }}></div>
+          </div>
+        </div>
+      )}
+      {updateReady && (
+        <div className="flex items-center justify-between bg-amber-500 text-white px-4 py-2 text-sm shrink-0">
+          <span>Actualizacion lista. Reinicia para aplicar los cambios.</span>
+          <button
+            onClick={() => electronAPI?.installUpdate()}
+            className="bg-white text-amber-700 px-3 py-1 rounded-lg text-xs font-bold hover:bg-amber-50 transition-colors"
+          >
+            Reiniciar ahora
+          </button>
         </div>
       )}
       <div className="flex-1 flex min-h-0">

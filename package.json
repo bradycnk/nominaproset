@@ -18,6 +18,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "dotenv": "^17.3.1",
+    "electron-updater": "^6.8.3",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "3.8.2",
     "react": "19.0.0",
@@ -49,11 +50,20 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "bradycnk",
+        "repo": "nominaproset"
+      }
+    ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.png"

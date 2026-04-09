@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 const isDev = !app.isPackaged;
@@ -48,6 +49,38 @@ function createWindow() {
   });
   ipcMain.handle('window-get-zoom', () => {
     return win.webContents.getZoomLevel();
+  });
+
+  // Auto-updater (solo en producción)
+  if (!isDev) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      win.webContents.send('update-available', info.version);
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+      win.webContents.send('update-progress', Math.round(progress.percent));
+    });
+
+    autoUpdater.on('update-downloaded', () => {
+      win.webContents.send('update-downloaded');
+    });
+
+    autoUpdater.on('error', (err) => {
+      console.error('Auto-updater error:', err);
+    });
+
+    autoUpdater.checkForUpdates().catch(() => {});
+  }
+
+  ipcMain.on('download-update', () => {
+    autoUpdater.downloadUpdate().catch(() => {});
+  });
+
+  ipcMain.on('install-update', () => {
+    autoUpdater.quitAndInstall(false, true);
   });
 }
 
