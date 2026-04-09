@@ -441,6 +441,53 @@ const PayrollProcessor: React.FC<{
     }
   };
 
+  const [resettingAllReceipts, setResettingAllReceipts] = useState(false);
+
+  const handleResetAllReceiptConfigs = async () => {
+    const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+    const empsWithConfig = filteredEmps.filter(emp => emp.receipt_print_config && Object.keys(emp.receipt_print_config).length > 0);
+
+    if (empsWithConfig.length === 0) {
+      alert('Ningún empleado tiene configuración individual de recibo para restablecer.');
+      return;
+    }
+
+    if (!confirm(`¿Restablecer la configuración de recibo de ${empsWithConfig.length} empleado(s) a los valores calculados por asistencia?`)) return;
+
+    setResettingAllReceipts(true);
+    try {
+      const updates = empsWithConfig.map(emp => {
+        const attendanceConfig = buildAttendanceDrivenReceiptConfig(emp);
+        return supabase
+          .from('empleados')
+          .update({ receipt_print_config: attendanceConfig })
+          .eq('id', emp.id);
+      });
+
+      const results = await Promise.all(updates);
+      const errors = results.filter(r => r.error);
+
+      if (errors.length > 0) {
+        console.error('Errores al restablecer recibos:', errors);
+        alert(`Se restablecieron ${empsWithConfig.length - errors.length} de ${empsWithConfig.length} recibos. Hubo ${errors.length} error(es).`);
+      } else {
+        alert(`Se restablecieron los recibos de ${empsWithConfig.length} empleado(s) correctamente.`);
+      }
+
+      setEmployees(prev => prev.map(emp => {
+        if (empsWithConfig.find(e => e.id === emp.id)) {
+          return { ...emp, receipt_print_config: buildAttendanceDrivenReceiptConfig(emp) };
+        }
+        return emp;
+      }));
+    } catch (error) {
+      console.error(error);
+      alert('Error al restablecer las configuraciones de recibo.');
+    } finally {
+      setResettingAllReceipts(false);
+    }
+  };
+
   const getEffectiveReceiptConfig = (emp?: Empleado): ReceiptPrintConfig => {
     if (emp && emp.receipt_print_config && Object.keys(emp.receipt_print_config).length > 0) {
       return normalizeReceiptPrintConfig(emp.receipt_print_config);
@@ -2377,6 +2424,13 @@ const PayrollProcessor: React.FC<{
                  setShowConfigModal(true);
                }} className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-100 transition-colors flex items-center gap-1">
                  <span>⚙️</span> Configurar
+               </button>
+               <button
+                 onClick={handleResetAllReceiptConfigs}
+                 disabled={resettingAllReceipts}
+                 className="bg-amber-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/20 flex items-center gap-1 disabled:opacity-50"
+               >
+                 <span>🔄</span> {resettingAllReceipts ? 'Restableciendo...' : 'Restablecer Recibos'}
                </button>
                {nominasCerradas.length > 0 ? (
                  <button onClick={handleReabrirQuincena} className="bg-rose-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20 flex items-center gap-1">
