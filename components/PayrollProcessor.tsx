@@ -443,42 +443,123 @@ const PayrollProcessor: React.FC<{
 
   const [resettingAllReceipts, setResettingAllReceipts] = useState(false);
 
+  const buildFullReceiptConfigFromAttendance = (emp: Empleado): ReceiptPrintConfig | null => {
+    if (!config) return null;
+    const baseConfig = config?.receipt_print_config ? normalizeReceiptPrintConfig(config.receipt_print_config) : defaultReceiptConfig;
+
+    const empAsistencias = attendances.filter((a) => a.empleado_id === emp.id);
+    const hoursData = processAttendanceRecords(empAsistencias);
+    const calcBase = calculatePayroll(emp, config, 15, periodo);
+    const salarioDiario = calcBase.salario_diario_normal;
+    const salarioHora = salarioDiario / 8;
+
+    const presentRecords = empAsistencias.filter(
+      (att) => att.estado === 'presente' && att.hora_entrada && att.hora_salida
+    );
+
+    const domingoLaborado = presentRecords.filter((att) => new Date(`${att.fecha}T00:00:00`).getDay() === 0).length;
+    const sabadoLaborado = presentRecords.filter((att) => new Date(`${att.fecha}T00:00:00`).getDay() === 6).length;
+
+    const bonoJornadaMixta = presentRecords.reduce((sum, att) => {
+      const shift = calculateDetailedShift(att.hora_entrada || '', att.hora_salida || '', att.fecha);
+      return shift.shiftType === 'Mixta' ? sum + shift.nightHours : sum;
+    }, 0);
+
+    const diasDescansoCount = hoursData.diasTrabajados > 0 ? Math.max(0, 15 - hoursData.diasTrabajados) : 4;
+    const descansoLabCount = hoursData.diasTrabajados > 11 ? sabadoLaborado : 0;
+
+    // Verificar adelantos/préstamos activos
+    const empAdelantos = adelantos.filter(a => a.empleado_id === emp.id && a.estado === 'aprobado');
+    const tieneAdelanto = empAdelantos.some(a => a.tipo === 'adelanto_nomina');
+    const tienePrestamo = empAdelantos.some(a => a.tipo === 'prestamo_credito');
+
+    // Calcular asignaciones para determinar deducciones
+    const aDiasLab = hoursData.diasTrabajados * salarioDiario;
+    const aDescanso = diasDescansoCount * salarioDiario;
+    const aDescansoLab = descansoLabCount * salarioDiario * 1.5;
+    const aDomLab = domingoLaborado * salarioDiario * 1.5;
+    const aExtDiur = hoursData.totalExtraDiurna * salarioHora * 1.5;
+    const aBonoNoc = hoursData.totalNightHours * salarioHora * 0.3;
+    const aBonoMix = bonoJornadaMixta * salarioHora * 0.3;
+    const aExtNoc = hoursData.totalExtraNocturna * salarioHora * 1.95;
+    const aCesta = calcBase.bono_alimentacion_vef;
+
+    const totalAsignaciones = aDiasLab + aDescanso + aDescansoLab + aDomLab + aExtDiur + aBonoNoc + aBonoMix + aExtNoc + aCesta;
+
+    // Recalcular deducciones con base imponible real (sin cestaticket)
+    const calc = calculatePayroll(emp, config, 15, periodo, totalAsignaciones - aCesta);
+
+    // Calcular adelantos
+    const maxAdelantosPermitido = Math.max(0, totalAsignaciones - (calc.deduccion_ivss + calc.deduccion_spf + calc.deduccion_faov));
+    const adelantosCalculados = getAdelantosForPeriod(emp.id, maxAdelantosPermitido);
+    const autoAdelantoNomina = adelantosCalculados.aplicados
+      .filter((item) => item.tipo === 'adelanto_nomina')
+      .reduce((sum, item) => sum + item.deducted, 0);
+    const autoPrestamoCredito = adelantosCalculados.aplicados
+      .filter((item) => item.tipo === 'prestamo_credito')
+      .reduce((sum, item) => sum + item.deducted, 0);
+
+    return {
+      diasLaborados: { enabled: hoursData.diasTrabajados > 0, cantidad: hoursData.diasTrabajados, montoUnitario: salarioDiario },
+      diasDescanso: { enabled: diasDescansoCount > 0, cantidad: diasDescansoCount, montoUnitario: salarioDiario },
+      descansoLaborado: { enabled: descansoLabCount > 0, cantidad: descansoLabCount, montoUnitario: salarioDiario * 1.5 },
+      domingoLaborado: { enabled: domingoLaborado > 0, cantidad: domingoLaborado, montoUnitario: salarioDiario * 1.5 },
+      horasExtrasDiurnas: { enabled: hoursData.totalExtraDiurna > 0, cantidad: hoursData.totalExtraDiurna, montoUnitario: salarioHora * 1.5 },
+      feriadosLaborados: { ...baseConfig.feriadosLaborados, enabled: false, cantidad: 0, montoUnitario: salarioDiario * 1.5 },
+      bonoNocturno: { enabled: hoursData.totalNightHours > 0, cantidad: hoursData.totalNightHours, montoUnitario: salarioHora * 0.3 },
+      turnosLaborados: { ...baseConfig.turnosLaborados, enabled: false },
+      bonoJornadaMixta: { enabled: bonoJornadaMixta > 0, cantidad: bonoJornadaMixta, montoUnitario: salarioHora * 0.3 },
+      horasExtrasNocturnas: { enabled: hoursData.totalExtraNocturna > 0, cantidad: hoursData.totalExtraNocturna, montoUnitario: salarioHora * 1.95 },
+      diasCompensatorios: { ...baseConfig.diasCompensatorios, enabled: false, cantidad: 0 },
+      sabadoLaborado: { enabled: sabadoLaborado > 0, cantidad: sabadoLaborado, montoUnitario: salarioDiario },
+      bonoAlimentacion: { enabled: hoursData.diasTrabajados > 0, cantidad: 1, montoUnitario: aCesta },
+      otrasAsignaciones: { ...baseConfig.otrasAsignaciones, enabled: false, cantidad: 0, montoUnitario: 0 },
+      vales: { ...baseConfig.vales, enabled: false, cantidad: 0, montoUnitario: 0 },
+      sso: { enabled: calc.deduccion_ivss > 0, cantidad: 1, montoUnitario: calc.deduccion_ivss },
+      rpe: { enabled: calc.deduccion_spf > 0, cantidad: 1, montoUnitario: calc.deduccion_spf },
+      faov: { enabled: calc.deduccion_faov > 0, cantidad: 1, montoUnitario: calc.deduccion_faov },
+      islr: { ...baseConfig.islr, enabled: false, cantidad: 0, montoUnitario: 0 },
+      adelantoNomina: { enabled: tieneAdelanto && autoAdelantoNomina > 0, cantidad: 1, montoUnitario: autoAdelantoNomina },
+      prestamo: { enabled: tienePrestamo && autoPrestamoCredito > 0, cantidad: 1, montoUnitario: autoPrestamoCredito },
+    };
+  };
+
   const handleResetAllReceiptConfigs = async () => {
     const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
-    const empsWithConfig = filteredEmps.filter(emp => emp.receipt_print_config && Object.keys(emp.receipt_print_config).length > 0);
 
-    if (empsWithConfig.length === 0) {
-      alert('Ningún empleado tiene configuración individual de recibo para restablecer.');
+    if (filteredEmps.length === 0) {
+      alert('No hay empleados para restablecer.');
       return;
     }
 
-    if (!confirm(`¿Restablecer la configuración de recibo de ${empsWithConfig.length} empleado(s) a los valores calculados por asistencia?`)) return;
+    if (!confirm(`¿Restablecer la configuración de recibo de ${filteredEmps.length} empleado(s) con los valores calculados desde asistencias (días laborados, horas extras, deducciones, etc.)?`)) return;
 
     setResettingAllReceipts(true);
     try {
-      const updates = empsWithConfig.map(emp => {
-        const attendanceConfig = buildAttendanceDrivenReceiptConfig(emp);
+      const configMap = new Map<string, ReceiptPrintConfig>();
+      const updates = filteredEmps.map(emp => {
+        const fullConfig = buildFullReceiptConfigFromAttendance(emp);
+        if (!fullConfig) return null;
+        configMap.set(emp.id, fullConfig);
         return supabase
           .from('empleados')
-          .update({ receipt_print_config: attendanceConfig })
+          .update({ receipt_print_config: fullConfig })
           .eq('id', emp.id);
-      });
+      }).filter(Boolean);
 
       const results = await Promise.all(updates);
-      const errors = results.filter(r => r.error);
+      const errors = results.filter(r => r && r.error);
 
       if (errors.length > 0) {
         console.error('Errores al restablecer recibos:', errors);
-        alert(`Se restablecieron ${empsWithConfig.length - errors.length} de ${empsWithConfig.length} recibos. Hubo ${errors.length} error(es).`);
+        alert(`Se restablecieron ${filteredEmps.length - errors.length} de ${filteredEmps.length} recibos. Hubo ${errors.length} error(es).`);
       } else {
-        alert(`Se restablecieron los recibos de ${empsWithConfig.length} empleado(s) correctamente.`);
+        alert(`Se restablecieron los recibos de ${filteredEmps.length} empleado(s) correctamente.`);
       }
 
       setEmployees(prev => prev.map(emp => {
-        if (empsWithConfig.find(e => e.id === emp.id)) {
-          return { ...emp, receipt_print_config: buildAttendanceDrivenReceiptConfig(emp) };
-        }
-        return emp;
+        const newConfig = configMap.get(emp.id);
+        return newConfig ? { ...emp, receipt_print_config: newConfig } : emp;
       }));
     } catch (error) {
       console.error(error);
