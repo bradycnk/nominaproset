@@ -37,6 +37,19 @@ const App: React.FC = () => {
   const [totalEmployees, setTotalEmployees] = useState(0);
   const [estimatedPayrollVEF, setEstimatedPayrollVEF] = useState(0);
   const [bcvSyncError, setBcvSyncError] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
+
+  const isElectron = !!(window as any).electronAPI?.isElectron;
+  const electronAPI = (window as any).electronAPI;
+
+  useEffect(() => {
+    if (!isElectron || !electronAPI) return;
+    electronAPI.onUpdateAvailable?.((version: string) => setUpdateVersion(version));
+    electronAPI.onUpdateProgress?.((percent: number) => setUpdateProgress(percent));
+    electronAPI.onUpdateDownloaded?.(() => { setUpdateReady(true); setUpdateProgress(null); });
+  }, [isElectron]);
 
   const fetchUserRole = async (userId: string) => {
     const { data } = await supabase
@@ -236,20 +249,6 @@ const App: React.FC = () => {
   );
 
   const displayName = session.user.user_metadata.full_name || session.user.email;
-
-  const isElectron = !!(window as any).electronAPI?.isElectron;
-  const electronAPI = (window as any).electronAPI;
-
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
-  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
-  const [updateReady, setUpdateReady] = useState(false);
-
-  useEffect(() => {
-    if (!isElectron || !electronAPI) return;
-    electronAPI.onUpdateAvailable?.((version: string) => setUpdateVersion(version));
-    electronAPI.onUpdateProgress?.((percent: number) => setUpdateProgress(percent));
-    electronAPI.onUpdateDownloaded?.(() => { setUpdateReady(true); setUpdateProgress(null); });
-  }, [isElectron]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
