@@ -247,7 +247,18 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2 pl-3">
             <span className="text-xs font-bold tracking-wide opacity-80">NominaPro</span>
           </div>
-          <div className="flex h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="flex h-full items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <div className="flex items-center gap-0.5 mr-2 bg-white/5 rounded px-1">
+              <button onClick={() => electronAPI?.zoomOut()} className="px-1.5 py-0.5 hover:bg-white/10 rounded text-[10px] font-bold transition-colors" title="Alejar (Ctrl -)">
+                −
+              </button>
+              <button onClick={() => electronAPI?.zoomReset()} className="px-1.5 py-0.5 hover:bg-white/10 rounded text-[10px] font-bold transition-colors opacity-60" title="Restablecer zoom (100%)">
+                100%
+              </button>
+              <button onClick={() => electronAPI?.zoomIn()} className="px-1.5 py-0.5 hover:bg-white/10 rounded text-[10px] font-bold transition-colors" title="Acercar (Ctrl +)">
+                +
+              </button>
+            </div>
             <button onClick={() => electronAPI?.windowMinimize()} className="px-4 h-full hover:bg-white/10 transition-colors flex items-center" title="Minimizar">
               <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
             </button>

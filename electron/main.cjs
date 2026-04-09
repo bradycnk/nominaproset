@@ -34,6 +34,21 @@ function createWindow() {
     win.isMaximized() ? win.unmaximize() : win.maximize();
   });
   ipcMain.on('window-close', () => win.close());
+
+  ipcMain.on('window-zoom-in', () => {
+    const current = win.webContents.getZoomLevel();
+    win.webContents.setZoomLevel(current + 0.5);
+  });
+  ipcMain.on('window-zoom-out', () => {
+    const current = win.webContents.getZoomLevel();
+    win.webContents.setZoomLevel(current - 0.5);
+  });
+  ipcMain.on('window-zoom-reset', () => {
+    win.webContents.setZoomLevel(0);
+  });
+  ipcMain.handle('window-get-zoom', () => {
+    return win.webContents.getZoomLevel();
+  });
 }
 
 app.whenReady().then(createWindow);
