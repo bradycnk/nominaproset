@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 
 const isDev = !app.isPackaged;
@@ -11,6 +11,8 @@ function createWindow() {
     minHeight: 700,
     title: 'FarmaNomina Pro',
     icon: path.join(__dirname, '../build/icon.ico'),
+    frame: false,
+    titleBarStyle: 'hidden',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -26,6 +28,12 @@ function createWindow() {
   }
 
   win.setMenuBarVisibility(false);
+
+  ipcMain.on('window-minimize', () => win.minimize());
+  ipcMain.on('window-maximize', () => {
+    win.isMaximized() ? win.unmaximize() : win.maximize();
+  });
+  ipcMain.on('window-close', () => win.close());
 }
 
 app.whenReady().then(createWindow);

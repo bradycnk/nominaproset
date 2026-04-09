@@ -237,8 +237,30 @@ const App: React.FC = () => {
 
   const displayName = session.user.user_metadata.full_name || session.user.email;
 
+  const isElectron = !!(window as any).electronAPI?.isElectron;
+  const electronAPI = (window as any).electronAPI;
+
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {isElectron && (
+        <div className="flex items-center justify-between bg-[#1E1E2D] text-white h-9 shrink-0 select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-2 pl-3">
+            <span className="text-xs font-bold tracking-wide opacity-80">NominaPro</span>
+          </div>
+          <div className="flex h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button onClick={() => electronAPI?.windowMinimize()} className="px-4 h-full hover:bg-white/10 transition-colors flex items-center" title="Minimizar">
+              <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+            </button>
+            <button onClick={() => electronAPI?.windowMaximize()} className="px-4 h-full hover:bg-white/10 transition-colors flex items-center" title="Maximizar">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg>
+            </button>
+            <button onClick={() => electronAPI?.windowClose()} className="px-4 h-full hover:bg-red-500 transition-colors flex items-center" title="Cerrar">
+              <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.2"><line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 flex min-h-0">
       <ThemeEngine config={config} />
       <Sidebar
         activeTab={activeTab}
@@ -311,6 +333,7 @@ const App: React.FC = () => {
       </main>
 
       <AIAssistant />
+      </div>
     </div>
   );
 };
