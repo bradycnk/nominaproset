@@ -131,6 +131,9 @@ const PayrollProcessor: React.FC<{
   const [selectedExtraDeductEmpId, setSelectedExtraDeductEmpId] = useState<string | null>(null);
   const [showExtraDeductModal, setShowExtraDeductModal] = useState(false);
   const [excludedEmployees, setExcludedEmployees] = useState<Record<string, boolean>>({});
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [sortField, setSortField] = useState<'nombre' | 'cedula' | 'asignaciones' | 'deducciones' | 'neto'>('nombre');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const [periodo, setPeriodo] = useState<'Q1' | 'Q2'>('Q1');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -2529,6 +2532,39 @@ const PayrollProcessor: React.FC<{
 
       {activeTab === 'lottt' && (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input
+              type="text"
+              placeholder="Buscar empleado por nombre o cédula..."
+              value={employeeSearch}
+              onChange={e => setEmployeeSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Ordenar por</span>
+            <select
+              value={sortField}
+              onChange={e => setSortField(e.target.value as typeof sortField)}
+              className="bg-white border border-slate-200 px-2 py-2 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="nombre">Nombre</option>
+              <option value="cedula">Cédula</option>
+              <option value="asignaciones">Asignaciones</option>
+              <option value="deducciones">Deducciones</option>
+              <option value="neto">Neto a Pagar</option>
+            </select>
+            <button
+              onClick={() => setSortDirection(d => d === 'asc' ? 'desc' : 'asc')}
+              className="bg-white border border-slate-200 px-2 py-2 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors"
+              title={sortDirection === 'asc' ? 'Ascendente' : 'Descendente'}
+            >
+              {sortDirection === 'asc' ? '↑ A-Z' : '↓ Z-A'}
+            </button>
+          </div>
+        </div>
         <table className="w-full text-sm text-left">
           <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest border-b">
             <tr>
@@ -2559,14 +2595,39 @@ const PayrollProcessor: React.FC<{
             </tr>
           </thead>
           <tbody className="divide-y">
-            {employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true).map(emp => {
+            {employees.filter(emp => {
+                if (selectedBranchId && emp.sucursal_id !== selectedBranchId) return false;
+                if (employeeSearch.trim()) {
+                  const q = employeeSearch.toLowerCase().trim();
+                  const fullName = `${emp.nombre} ${emp.apellido}`.toLowerCase();
+                  const cedula = (emp.cedula || '').toLowerCase();
+                  if (!fullName.includes(q) && !cedula.includes(q)) return false;
+                }
+                return true;
+            }).sort((a, b) => {
+                const dir = sortDirection === 'asc' ? 1 : -1;
+                if (sortField === 'nombre') {
+                  return dir * `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`);
+                }
+                if (sortField === 'cedula') {
+                  return dir * (a.cedula || '').localeCompare(b.cedula || '');
+                }
+                // For numeric sorts, compute breakdowns
+                const bA = getPayrollBreakdown(a);
+                const bB = getPayrollBreakdown(b);
+                if (!bA || !bB) return 0;
+                if (sortField === 'asignaciones') return dir * (bA.totalAsignaciones - bB.totalAsignaciones);
+                if (sortField === 'deducciones') return dir * (bA.totalDeducciones - bB.totalDeducciones);
+                if (sortField === 'neto') return dir * (bA.neto - bB.neto);
+                return 0;
+            }).map(emp => {
                 if (!config) return null;
-                
+
                 const snapshot = nominasCerradas.find(n => n.empleado_id === emp.id);
                 const isClosed = !!snapshot;
                 const breakdown = isClosed ? snapshot.detalles_calculo : getPayrollBreakdown(emp);
                 const prestamosData = getPrestamoSaldoByEmployee(emp.id);
-                
+
                 if (!breakdown) return null;
 
                 const isExcluded = excludedEmployees[emp.id] || false;
