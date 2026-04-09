@@ -2429,8 +2429,8 @@ const PayrollProcessor: React.FC<{
         </div>
       )}
 
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
-        <div className="min-w-max">
+      <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 sm:gap-6 min-w-0">
+        <div className="min-w-0 shrink-0">
            <h3 className="text-xl font-black text-slate-800 tracking-tight">Procesar Nómina</h3>
            <div className="flex bg-slate-100 p-1 rounded-lg mt-2 w-max">
              <button 
@@ -2447,7 +2447,7 @@ const PayrollProcessor: React.FC<{
              </button>
            </div>
         </div>
-        <div className="flex flex-wrap gap-3 items-center bg-slate-50 p-2 rounded-xl w-full xl:w-auto overflow-x-auto">
+        <div className="flex flex-wrap gap-2 sm:gap-3 items-center bg-slate-50 p-2 rounded-xl w-full xl:w-auto min-w-0">
            <select 
              className="bg-white border border-slate-200 p-2 rounded-lg text-sm font-bold min-w-[150px] outline-none focus:ring-2 focus:ring-emerald-500"
              value={selectedBranchId}
@@ -2483,45 +2483,45 @@ const PayrollProcessor: React.FC<{
            {/* Grupo: Generar documentos */}
            <div className="flex flex-col gap-1">
              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">Generar</span>
-             <div className="flex gap-2">
-               <button onClick={generateGlobalPDF} className="bg-slate-800 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-700 transition-colors shadow-lg shadow-slate-800/20 flex items-center gap-1">
-                 <span>📄</span> Recibo Global
+             <div className="flex flex-wrap gap-1.5">
+               <button onClick={generateGlobalPDF} className="bg-slate-800 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-700 transition-colors shadow-lg shadow-slate-800/20 flex items-center gap-1 whitespace-nowrap">
+                 <span>📄</span> <span className="hidden sm:inline">Recibo</span> Global
                </button>
-               <button onClick={generateReciboGeneralPDF} className="bg-indigo-700 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-indigo-800 transition-colors shadow-lg shadow-indigo-700/20 flex items-center gap-1">
-                 <span>📑</span> Recibo General
+               <button onClick={generateReciboGeneralPDF} className="bg-indigo-700 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-indigo-800 transition-colors shadow-lg shadow-indigo-700/20 flex items-center gap-1 whitespace-nowrap">
+                 <span>📑</span> <span className="hidden sm:inline">Recibo</span> General
                </button>
-               <button onClick={generateGeneralPaymentLotttPDF} className="bg-emerald-800 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-800/20 flex items-center gap-1">
+               <button onClick={generateGeneralPaymentLotttPDF} className="bg-emerald-800 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-800/20 flex items-center gap-1 whitespace-nowrap">
                  <span>📋</span> Planilla LOTTT
                </button>
              </div>
            </div>
 
-           <div className="w-px h-10 bg-slate-200 self-end mb-0.5"></div>
+           <div className="hidden xl:block w-px h-10 bg-slate-200 self-end mb-0.5"></div>
 
            {/* Grupo: Acciones */}
            <div className="flex flex-col gap-1">
              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">Acciones</span>
-             <div className="flex gap-2">
+             <div className="flex flex-wrap gap-1.5">
                <button onClick={() => {
                  setReceiptConfigEmployeeId(null);
                  setReceiptConfig(config?.receipt_print_config ? normalizeReceiptPrintConfig(config.receipt_print_config) : defaultReceiptConfig);
                  setShowConfigModal(true);
-               }} className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-100 transition-colors flex items-center gap-1">
+               }} className="bg-white border border-slate-200 text-slate-700 px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-100 transition-colors flex items-center gap-1 whitespace-nowrap">
                  <span>⚙️</span> Configurar
                </button>
                <button
                  onClick={handleResetAllReceiptConfigs}
                  disabled={resettingAllReceipts}
-                 className="bg-amber-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/20 flex items-center gap-1 disabled:opacity-50"
+                 className="bg-amber-500 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/20 flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
                >
                  <span>🔄</span> {resettingAllReceipts ? 'Restableciendo...' : 'Restablecer Recibos'}
                </button>
                {nominasCerradas.length > 0 ? (
-                 <button onClick={handleReabrirQuincena} className="bg-rose-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20 flex items-center gap-1">
+                 <button onClick={handleReabrirQuincena} className="bg-rose-500 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20 flex items-center gap-1 whitespace-nowrap">
                    <span>🔓</span> Reabrir Quincena
                  </button>
                ) : (
-                 <button onClick={handleCerrarQuincena} className="bg-emerald-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 flex items-center gap-1">
+                 <button onClick={handleCerrarQuincena} className="bg-emerald-500 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 flex items-center gap-1 whitespace-nowrap">
                    <span>✅</span> Cerrar Quincena
                  </button>
                )}
@@ -2565,7 +2565,8 @@ const PayrollProcessor: React.FC<{
             </button>
           </div>
         </div>
-        <table className="w-full text-sm text-left">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left min-w-[800px]">
           <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest border-b">
             <tr>
               <th className="px-3 py-4 text-center w-10">
@@ -2683,7 +2684,7 @@ const PayrollProcessor: React.FC<{
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <div className="flex justify-center gap-1.5">
+                      <div className="flex flex-wrap justify-center gap-1.5">
                         {!isClosed && (
                           <button
                             onClick={() => {
@@ -2694,7 +2695,7 @@ const PayrollProcessor: React.FC<{
                               setAdelantoMotivo('');
                               setShowAdelantoModal(true);
                             }}
-                            className="flex items-center gap-1 px-3 py-2 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 hover:text-slate-800 transition-all text-[10px] font-bold"
+                            className="flex items-center gap-1 px-2 sm:px-3 py-2 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 hover:text-slate-800 transition-all text-[10px] font-bold whitespace-nowrap"
                             title="Registrar Adelanto"
                           >
                             <span>💸</span> Adelanto
@@ -2707,14 +2708,14 @@ const PayrollProcessor: React.FC<{
                             setReceiptConfig(hasSaved ? normalizeReceiptPrintConfig(emp.receipt_print_config) : buildAttendanceDrivenReceiptConfig(emp));
                             setShowConfigModal(true);
                           }}
-                          className="flex items-center gap-1 px-3 py-2 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 hover:text-slate-800 transition-all text-[10px] font-bold"
+                          className="flex items-center gap-1 px-2 sm:px-3 py-2 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 hover:text-slate-800 transition-all text-[10px] font-bold whitespace-nowrap"
                           title="Configurar Recibo Individual"
                         >
                           <span>⚙️</span> Recibo
                         </button>
                         <button
                           onClick={() => generatePDF(emp, breakdown)}
-                          className="flex items-center gap-1 px-3 py-2 bg-emerald-100 rounded-lg text-emerald-700 hover:bg-emerald-600 hover:text-white transition-all text-[10px] font-bold shadow-sm"
+                          className="flex items-center gap-1 px-2 sm:px-3 py-2 bg-emerald-100 rounded-lg text-emerald-700 hover:bg-emerald-600 hover:text-white transition-all text-[10px] font-bold shadow-sm whitespace-nowrap"
                           title="Descargar Recibo PDF"
                         >
                           <span>📄</span> PDF
@@ -2759,6 +2760,7 @@ const PayrollProcessor: React.FC<{
             })()}
           </tfoot>
         </table>
+        </div>
       </div>
       )}
 

@@ -248,7 +248,7 @@ const App: React.FC = () => {
         userRole={userRole}
       />
 
-      <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 lg:ml-72 lg:p-12">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:ml-72 lg:p-12">
         <header className="mb-8 flex flex-col gap-5 lg:mb-12 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="mb-3 flex items-center gap-3 lg:hidden">
