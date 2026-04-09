@@ -512,7 +512,7 @@ const PayrollProcessor: React.FC<{
       horasExtrasNocturnas: { enabled: hoursData.totalExtraNocturna > 0, cantidad: hoursData.totalExtraNocturna, montoUnitario: salarioHora * 1.95 },
       diasCompensatorios: { ...baseConfig.diasCompensatorios, enabled: false, cantidad: 0 },
       sabadoLaborado: { enabled: sabadoLaborado > 0, cantidad: sabadoLaborado, montoUnitario: salarioDiario },
-      bonoAlimentacion: { enabled: hoursData.diasTrabajados > 0, cantidad: 1, montoUnitario: aCesta },
+      bonoAlimentacion: { enabled: false, cantidad: 0, montoUnitario: 0 },
       otrasAsignaciones: { ...baseConfig.otrasAsignaciones, enabled: false, cantidad: 0, montoUnitario: 0 },
       vales: { ...baseConfig.vales, enabled: false, cantidad: 0, montoUnitario: 0 },
       sso: { enabled: calc.deduccion_ivss > 0, cantidad: 1, montoUnitario: calc.deduccion_ivss },
