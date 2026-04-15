@@ -96,6 +96,9 @@ const AttendanceManager: React.FC = () => {
   const [employeeSelectedBranch, setEmployeeSelectedBranch] = useState<Record<string, string>>({});
   // Sucursal seleccionada en el editor de día del histórico
   const [calendarBranchId, setCalendarBranchId] = useState<string>('');
+  // Modo especial: permite seleccionar cualquier sucursal para el día editado
+  const [showSpecialBranchMode, setShowSpecialBranchMode] = useState(false);
+  const [addToEmployeeBranches, setAddToEmployeeBranches] = useState(false);
 
   // Estados para Calendario / Histórico
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
@@ -137,6 +140,8 @@ const AttendanceManager: React.FC = () => {
       const emp = employees.find(e => e.id === selectedEmployeeId);
       setCalendarBranchId(emp?.sucursal_id || '');
     }
+    setShowSpecialBranchMode(false);
+    setAddToEmployeeBranches(false);
   }, [selectedEmployeeId, selectedMonth, selectedYear]);
 
   const fetchInitialData = async () => {
@@ -235,6 +240,8 @@ const AttendanceManager: React.FC = () => {
     // Al abrir un día existente, cargar su sucursal; si es nuevo usar la del empleado
     const emp = employees.find(e => e.id === selectedEmployeeId);
     setCalendarBranchId(record?.sucursal_id || emp?.sucursal_id || '');
+    setShowSpecialBranchMode(false);
+    setAddToEmployeeBranches(false);
   };
 
   const deleteDay = async () => {
@@ -316,6 +323,22 @@ const AttendanceManager: React.FC = () => {
           .insert(payload);
         if (error) throw error;
       }
+
+      // Si era modo especial y el usuario pidió agregar la sucursal como habitual
+      if (showSpecialBranchMode && addToEmployeeBranches && calendarBranchId) {
+        await supabase
+          .from('empleado_sucursales')
+          .insert({ empleado_id: selectedEmployeeId, sucursal_id: calendarBranchId, es_principal: false })
+          .then(() => {
+            // Actualizar mapa local para que el dropdown se actualice
+            setEmployeeBranchMap(prev => ({
+              ...prev,
+              [selectedEmployeeId]: [...(prev[selectedEmployeeId] || []), calendarBranchId]
+            }));
+          });
+      }
+      setShowSpecialBranchMode(false);
+      setAddToEmployeeBranches(false);
 
       const refreshedHistory = await fetchEmployeeHistory();
 
@@ -1208,20 +1231,76 @@ const AttendanceManager: React.FC = () => {
                              const emp = employees.find(e => e.id === selectedEmployeeId);
                              return b.id === emp?.sucursal_id;
                            });
+                       const isClosed = !!selectedHistoryRecord?.cerrado;
                        return (
                          <div className="mt-2">
                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1 block">
                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                              Sucursal
+                             {showSpecialBranchMode && (
+                               <span className="ml-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-black uppercase">Modo especial</span>
+                             )}
                            </label>
+
+                           {/* Selector normal o especial */}
                            <select
                              value={calendarBranchId}
                              onChange={e => setCalendarBranchId(e.target.value)}
-                             disabled={!!selectedHistoryRecord?.cerrado}
-                             className="w-full px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50 text-xs font-black text-indigo-700 outline-none cursor-pointer disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200"
+                             disabled={isClosed}
+                             className={`w-full px-3 py-2 rounded-xl text-xs font-black outline-none cursor-pointer disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 ${
+                               showSpecialBranchMode
+                                 ? 'border border-amber-200 bg-amber-50 text-amber-800'
+                                 : 'border border-indigo-100 bg-indigo-50 text-indigo-700'
+                             }`}
                            >
-                             {empCalBranches.map(b => <option key={b.id} value={b.id}>{b.nombre_id}</option>)}
+                             {showSpecialBranchMode
+                               ? branches.map(b => (
+                                   <option key={b.id} value={b.id}>
+                                     {empCalBranches.some(eb => eb.id === b.id) ? '★ ' : ''}{b.nombre_id}
+                                   </option>
+                                 ))
+                               : empCalBranches.map(b => <option key={b.id} value={b.id}>{b.nombre_id}</option>)
+                             }
                            </select>
+
+                           {/* Botón caso especial / cancelar */}
+                           {!isClosed && (
+                             !showSpecialBranchMode ? (
+                               <button
+                                 type="button"
+                                 onClick={() => setShowSpecialBranchMode(true)}
+                                 className="mt-1.5 text-[9px] font-black text-amber-600 hover:text-amber-700 flex items-center gap-1 transition-colors"
+                               >
+                                 <span className="text-[11px]">⊕</span> Trabajó en otra sucursal
+                               </button>
+                             ) : (
+                               <div className="mt-1.5 space-y-1.5">
+                                 <label className="flex items-center gap-2 cursor-pointer group">
+                                   <input
+                                     type="checkbox"
+                                     checked={addToEmployeeBranches}
+                                     onChange={e => setAddToEmployeeBranches(e.target.checked)}
+                                     className="rounded border-amber-300 accent-amber-600 w-3 h-3"
+                                   />
+                                   <span className="text-[9px] font-bold text-slate-500 group-hover:text-slate-700">
+                                     Agregar como sucursal habitual del empleado
+                                   </span>
+                                 </label>
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     setShowSpecialBranchMode(false);
+                                     setAddToEmployeeBranches(false);
+                                     const emp = employees.find(e => e.id === selectedEmployeeId);
+                                     setCalendarBranchId(emp?.sucursal_id || '');
+                                   }}
+                                   className="text-[9px] font-bold text-slate-400 hover:text-slate-600 flex items-center gap-1 transition-colors"
+                                 >
+                                   ✕ Cancelar modo especial
+                                 </button>
+                               </div>
+                             )
+                           )}
                          </div>
                        );
                      })()}
