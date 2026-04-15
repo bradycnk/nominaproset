@@ -92,6 +92,10 @@ const AttendanceManager: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   // Mapa empleado_id -> [sucursal_id, ...] para soporte multi-sucursal
   const [employeeBranchMap, setEmployeeBranchMap] = useState<Record<string, string[]>>({});
+  // Sucursal seleccionada por empleado en el control diario (para etiquetar asistencia)
+  const [employeeSelectedBranch, setEmployeeSelectedBranch] = useState<Record<string, string>>({});
+  // Sucursal seleccionada en el editor de día del histórico
+  const [calendarBranchId, setCalendarBranchId] = useState<string>('');
 
   // Estados para Calendario / Histórico
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
@@ -128,6 +132,11 @@ const AttendanceManager: React.FC = () => {
       hora_salida: '',
       observaciones: ''
     });
+    // Al cambiar empleado, inicializar sucursal del calendario con su sucursal principal
+    if (selectedEmployeeId) {
+      const emp = employees.find(e => e.id === selectedEmployeeId);
+      setCalendarBranchId(emp?.sucursal_id || '');
+    }
   }, [selectedEmployeeId, selectedMonth, selectedYear]);
 
   const fetchInitialData = async () => {
@@ -165,6 +174,13 @@ const AttendanceManager: React.FC = () => {
       if (empData && empData.length > 0 && !selectedEmployeeId) {
         setSelectedEmployeeId(empData[0].id);
       }
+
+      // Inicializar selección de sucursal por empleado (sucursal principal como default)
+      const branchDefaults: Record<string, string> = {};
+      empData?.forEach(emp => {
+        branchDefaults[emp.id] = emp.sucursal_id || '';
+      });
+      setEmployeeSelectedBranch(prev => ({ ...branchDefaults, ...prev }));
 
       const attMap: Record<string, Asistencia> = {};
       attData?.forEach(a => {
@@ -216,6 +232,9 @@ const AttendanceManager: React.FC = () => {
       hora_salida: record?.hora_salida && record.hora_salida.includes('T') ? record.hora_salida.split('T')[1].slice(0, 5) : (record?.hora_salida || ''),
       observaciones: record?.observaciones || ''
     });
+    // Al abrir un día existente, cargar su sucursal; si es nuevo usar la del empleado
+    const emp = employees.find(e => e.id === selectedEmployeeId);
+    setCalendarBranchId(record?.sucursal_id || emp?.sucursal_id || '');
   };
 
   const deleteDay = async () => {
@@ -268,19 +287,21 @@ const AttendanceManager: React.FC = () => {
     try {
       const obs = dayDraft.observaciones.trim();
 
+      const empForCalendar = employees.find(e => e.id === selectedEmployeeId);
       const payload = {
         empleado_id: selectedEmployeeId,
         fecha: selectedDate,
         estado: dayDraft.estado,
-        hora_entrada: dayDraft.estado === 'presente' && dayDraft.hora_entrada 
-          ? `${selectedDate}T${dayDraft.hora_entrada}:00` 
+        hora_entrada: dayDraft.estado === 'presente' && dayDraft.hora_entrada
+          ? `${selectedDate}T${dayDraft.hora_entrada}:00`
           : null,
-        hora_salida: dayDraft.estado === 'presente' && dayDraft.hora_salida 
-          ? (dayDraft.hora_salida < dayDraft.hora_entrada 
+        hora_salida: dayDraft.estado === 'presente' && dayDraft.hora_salida
+          ? (dayDraft.hora_salida < dayDraft.hora_entrada
               ? `${new Date(new Date(selectedDate).getTime() + 86400000).toISOString().split('T')[0]}T${dayDraft.hora_salida}:00`
               : `${selectedDate}T${dayDraft.hora_salida}:00`)
           : null,
         observaciones: obs || null,
+        sucursal_id: calendarBranchId || empForCalendar?.sucursal_id || null,
       };
 
       if (dayDraft.id) {
@@ -343,9 +364,9 @@ const AttendanceManager: React.FC = () => {
 
     setProcessingId(empId);
     try {
-      // Determinar sucursal: usa el filtro activo, o la principal del empleado como fallback
+      // Determinar sucursal: usa la seleccionada por fila > filtro global > principal del empleado
       const emp = employees.find(e => e.id === empId);
-      const branchForRecord = selectedBranchId || emp?.sucursal_id || null;
+      const branchForRecord = employeeSelectedBranch[empId] || selectedBranchId || emp?.sucursal_id || null;
 
       const payload = {
         empleado_id: empId,
@@ -857,6 +878,33 @@ const AttendanceManager: React.FC = () => {
                           <div>
                             <div className="text-xs font-black text-slate-800 uppercase tracking-tight">{emp.nombre} {emp.apellido}</div>
                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{emp.cargo}</div>
+                            {/* Selector de sucursal por empleado */}
+                            {(() => {
+                              const empBranches = employeeBranchMap[emp.id]?.length > 0
+                                ? branches.filter(b => employeeBranchMap[emp.id].includes(b.id))
+                                : branches.filter(b => b.id === emp.sucursal_id);
+                              const isMulti = empBranches.length > 1;
+                              const isLocked = entrySaved || isClosed;
+                              return (
+                                <div className="mt-1.5 flex items-center gap-1">
+                                  <svg className="w-2.5 h-2.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                  {isMulti && !isLocked ? (
+                                    <select
+                                      value={employeeSelectedBranch[emp.id] || emp.sucursal_id || ''}
+                                      onChange={e => setEmployeeSelectedBranch(prev => ({ ...prev, [emp.id]: e.target.value }))}
+                                      className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-1.5 py-0.5 outline-none cursor-pointer hover:border-indigo-300 transition-colors"
+                                      title="Seleccionar sucursal para esta asistencia"
+                                    >
+                                      {empBranches.map(b => <option key={b.id} value={b.id}>{b.nombre_id}</option>)}
+                                    </select>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-slate-400">
+                                      {empBranches[0]?.nombre_id || '—'}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       </td>
@@ -1152,6 +1200,31 @@ const AttendanceManager: React.FC = () => {
                        <option value="reposo">Reposo</option>
                        <option value="vacaciones">Vacaciones</option>
                      </select>
+                     {/* Selector de sucursal para este registro */}
+                     {(() => {
+                       const empCalBranches = employeeBranchMap[selectedEmployeeId]?.length > 0
+                         ? branches.filter(b => employeeBranchMap[selectedEmployeeId].includes(b.id))
+                         : branches.filter(b => {
+                             const emp = employees.find(e => e.id === selectedEmployeeId);
+                             return b.id === emp?.sucursal_id;
+                           });
+                       return (
+                         <div className="mt-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1 block">
+                             <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                             Sucursal
+                           </label>
+                           <select
+                             value={calendarBranchId}
+                             onChange={e => setCalendarBranchId(e.target.value)}
+                             disabled={!!selectedHistoryRecord?.cerrado}
+                             className="w-full px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50 text-xs font-black text-indigo-700 outline-none cursor-pointer disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200"
+                           >
+                             {empCalBranches.map(b => <option key={b.id} value={b.id}>{b.nombre_id}</option>)}
+                           </select>
+                         </div>
+                       );
+                     })()}
                    </div>
 
                    <div>
