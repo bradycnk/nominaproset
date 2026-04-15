@@ -157,4 +157,12 @@ export interface Asistencia {
   hora_salida?: string;
   observaciones?: string;
   cerrado?: boolean;
+  sucursal_id?: string;
+}
+
+export interface EmpleadoSucursal {
+  id: string;
+  empleado_id: string;
+  sucursal_id: string;
+  es_principal: boolean;
 }

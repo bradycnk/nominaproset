@@ -2765,12 +2765,29 @@ const PayrollProcessor: React.FC<{
       )}
 
       {activeTab === 'prorrateo' && (() => {
-        const filteredEmps = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+        // Para prorrateo: incluir empleado si su sucursal principal coincide
+        // O si tiene registros de asistencia en esa sucursal (multi-sucursal)
+        const filteredEmps = employees.filter(emp => {
+          if (!selectedBranchId) return true;
+          if (emp.sucursal_id === selectedBranchId) return true;
+          // Multi-sucursal: empleado trabajó en esta sucursal durante el período
+          return attendances.some(a =>
+            a.empleado_id === emp.id && a.sucursal_id === selectedBranchId
+          );
+        });
         const tasa = config?.tasa_bcv || 1;
         const horasBaseQuincena = 120; // 15 días * 8 horas = 120 horas base
 
         const empHoursData = filteredEmps.map(emp => {
-           const empAsistencias = attendances.filter(a => a.empleado_id === emp.id);
+          // Para prorrateo: solo contar horas trabajadas EN esta sucursal específica.
+          // Registros sin sucursal_id (datos anteriores) se atribuyen a la sucursal principal del empleado.
+          const empAsistencias = selectedBranchId
+            ? attendances.filter(a =>
+                a.empleado_id === emp.id &&
+                (a.sucursal_id === selectedBranchId ||
+                  (!a.sucursal_id && emp.sucursal_id === selectedBranchId))
+              )
+            : attendances.filter(a => a.empleado_id === emp.id);
            const hoursData = processAttendanceRecords(empAsistencias);
           // El prorrateo debe contemplar todas las horas efectivamente laboradas,
           // incluyendo jornadas en descanso, fines de semana y turnos nocturnos.

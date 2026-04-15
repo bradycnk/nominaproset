@@ -90,6 +90,8 @@ const AttendanceManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Mapa empleado_id -> [sucursal_id, ...] para soporte multi-sucursal
+  const [employeeBranchMap, setEmployeeBranchMap] = useState<Record<string, string[]>>({});
 
   // Estados para Calendario / Histórico
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
@@ -140,6 +142,19 @@ const AttendanceManager: React.FC = () => {
         .eq('activo', true)
         .order('nombre', { ascending: true });
 
+      // Cargar relaciones multi-sucursal
+      const { data: empBrData } = await supabase
+        .from('empleado_sucursales')
+        .select('empleado_id, sucursal_id');
+
+      // Construir mapa empleado_id -> [sucursal_ids]
+      const branchMap: Record<string, string[]> = {};
+      empBrData?.forEach(({ empleado_id, sucursal_id }) => {
+        if (!branchMap[empleado_id]) branchMap[empleado_id] = [];
+        branchMap[empleado_id].push(sucursal_id);
+      });
+      setEmployeeBranchMap(branchMap);
+
       // Buscamos asistencias de hoy O turnos que sigan abiertos (sin salida)
       const { data: attData } = await supabase
         .from('asistencias')
@@ -150,7 +165,7 @@ const AttendanceManager: React.FC = () => {
       if (empData && empData.length > 0 && !selectedEmployeeId) {
         setSelectedEmployeeId(empData[0].id);
       }
-      
+
       const attMap: Record<string, Asistencia> = {};
       attData?.forEach(a => {
         // Si hay varios turnos para el mismo empleado, priorizamos el abierto (sin salida)
@@ -158,9 +173,9 @@ const AttendanceManager: React.FC = () => {
           attMap[a.empleado_id] = a;
         }
       });
-      
+
       setAttendances(prev => ({ ...attMap }));
-      setSavedAttendances(JSON.parse(JSON.stringify(attMap))); 
+      setSavedAttendances(JSON.parse(JSON.stringify(attMap)));
 
     } catch (err) {
       console.error("Error cargando asistencia:", err);
@@ -328,11 +343,16 @@ const AttendanceManager: React.FC = () => {
 
     setProcessingId(empId);
     try {
+      // Determinar sucursal: usa el filtro activo, o la principal del empleado como fallback
+      const emp = employees.find(e => e.id === empId);
+      const branchForRecord = selectedBranchId || emp?.sucursal_id || null;
+
       const payload = {
         empleado_id: empId,
         fecha: today,
         hora_entrada: `${today}T${data.hora_entrada}:00`,
-        estado: 'presente' as const
+        estado: 'presente' as const,
+        sucursal_id: branchForRecord
       };
 
       const { error } = await supabase
@@ -770,7 +790,7 @@ const AttendanceManager: React.FC = () => {
              </div>
              {/* Stats bar */}
              {!loading && (() => {
-               const filtered = employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true);
+               const filtered = employees.filter(emp => selectedBranchId ? (employeeBranchMap[emp.id]?.includes(selectedBranchId) || emp.sucursal_id === selectedBranchId) : true);
                const total = filtered.length;
                const pendientes = filtered.filter(emp => !savedAttendances[emp.id]?.id).length;
                const laborando = filtered.filter(emp => savedAttendances[emp.id]?.id && !savedAttendances[emp.id]?.hora_salida && !savedAttendances[emp.id]?.cerrado).length;
@@ -812,7 +832,7 @@ const AttendanceManager: React.FC = () => {
               <tbody className="divide-y divide-slate-50">
                 {loading ? (
                   <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
-                ) : employees.filter(emp => (selectedBranchId ? emp.sucursal_id === selectedBranchId : true) && (searchQuery ? `${emp.nombre} ${emp.apellido}`.toLowerCase().includes(searchQuery.toLowerCase()) : true)).map(emp => {                  const att = attendances[emp.id];
+                ) : employees.filter(emp => (selectedBranchId ? (employeeBranchMap[emp.id]?.includes(selectedBranchId) || emp.sucursal_id === selectedBranchId) : true) && (searchQuery ? `${emp.nombre} ${emp.apellido}`.toLowerCase().includes(searchQuery.toLowerCase()) : true)).map(emp => {                  const att = attendances[emp.id];
                   const savedAtt = savedAttendances[emp.id];
 
                   const entrySaved = !!savedAtt?.id; 
@@ -973,7 +993,7 @@ const AttendanceManager: React.FC = () => {
                     onChange={(e) => {
                        setSelectedBranchId(e.target.value);
                        // Auto-seleccionar primer empleado de la sucursal si existe
-                       const filtered = employees.filter(emp => e.target.value ? emp.sucursal_id === e.target.value : true);
+                       const filtered = employees.filter(emp => e.target.value ? (employeeBranchMap[emp.id]?.includes(e.target.value) || emp.sucursal_id === e.target.value) : true);
                        if (filtered.length > 0) {
                           setSelectedEmployeeId(filtered[0].id);
                        } else {
@@ -992,7 +1012,7 @@ const AttendanceManager: React.FC = () => {
                     value={selectedEmployeeId}
                     onChange={(e) => setSelectedEmployeeId(e.target.value)}
                  >
-                    {employees.filter(emp => selectedBranchId ? emp.sucursal_id === selectedBranchId : true).map(e => <option key={e.id} value={e.id}>{e.nombre} {e.apellido}</option>)}
+                    {employees.filter(emp => selectedBranchId ? (employeeBranchMap[emp.id]?.includes(selectedBranchId) || emp.sucursal_id === selectedBranchId) : true).map(e => <option key={e.id} value={e.id}>{e.nombre} {e.apellido}</option>)}
                  </select>
               </div>
               <div className="w-full md:w-48">
