@@ -1,2 +1,0 @@
-ALTER TABLE empleados ADD COLUMN IF NOT EXISTS mano_dominante VARCHAR(20);
-ALTER TABLE empleados ADD COLUMN IF NOT EXISTS estado_laboral VARCHAR(20) DEFAULT 'Activo';

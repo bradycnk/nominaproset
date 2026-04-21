@@ -34,7 +34,7 @@ const Configuration: React.FC<ConfigurationProps> = ({ config, onUpdate }) => {
     setFetchingBcv(true);
     try {
       const rate = await fetchBcvRate();
-      if (rate > 0) {
+      if (rate !== null && rate > 0 && Number.isFinite(rate)) {
         setFormData(prev => ({ ...prev, tasa_bcv: rate }));
         setSuccessMessage(`Tasa BCV obtenida: Bs. ${rate}`);
         setTimeout(() => setSuccessMessage(null), 3000);
@@ -51,7 +51,33 @@ const Configuration: React.FC<ConfigurationProps> = ({ config, onUpdate }) => {
 
   const handleSave = async () => {
     if (!config?.id) return;
-    
+
+    const tasa = Number(formData.tasa_bcv);
+    if (!Number.isFinite(tasa) || tasa <= 0) {
+      alert('La tasa BCV debe ser un número mayor a 0.');
+      return;
+    }
+    const ctUsd = Number(formData.cestaticket_usd ?? 0);
+    if (!Number.isFinite(ctUsd) || ctUsd < 0) {
+      alert('El cestaticket no puede ser negativo.');
+      return;
+    }
+    const salMin = Number(formData.salario_minimo_vef ?? 0);
+    if (!Number.isFinite(salMin) || salMin < 0) {
+      alert('El salario mínimo no puede ser negativo.');
+      return;
+    }
+    const diasUt = Number(formData.dias_utilidades ?? 30);
+    if (!Number.isFinite(diasUt) || diasUt < 30 || diasUt > 120) {
+      alert('Los días de utilidades deben estar entre 30 y 120 (Art. 131 LOTTT).');
+      return;
+    }
+    const diasBv = Number(formData.dias_bono_vacacional_base ?? 15);
+    if (!Number.isFinite(diasBv) || diasBv < 15 || diasBv > 30) {
+      alert('Los días base de bono vacacional deben estar entre 15 y 30 (Art. 192 LOTTT).');
+      return;
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase

@@ -28,7 +28,7 @@ const TAB_TITLES: Record<string, string> = {
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
-  const [userRole, setUserRole] = useState<string>('admin');
+  const [userRole, setUserRole] = useState<string>('employee');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [visitedTabs, setVisitedTabs] = useState<string[]>(['dashboard']);
   const [config, setConfig] = useState<ConfigGlobal | null>(null);
@@ -52,12 +52,17 @@ const App: React.FC = () => {
   }, [isElectron]);
 
   const fetchUserRole = async (userId: string) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('perfiles_admin')
       .select('role')
       .eq('id', userId)
       .single();
-    const role = data?.role || 'admin';
+    if (error || !data?.role) {
+      console.warn('Perfil sin rol definido o inaccesible; asignando rol mínimo.', error);
+      setUserRole('employee');
+      return;
+    }
+    const role = data.role;
     setUserRole(role);
     if (role === 'asistencia') {
       setActiveTab('asistencia');
@@ -97,11 +102,14 @@ const App: React.FC = () => {
     }
 
     const newRate = await fetchBcvRate();
-    if (newRate <= 0) {
+    if (newRate === null || newRate <= 0 || !Number.isFinite(newRate)) {
       setBcvSyncError(true);
       return;
     }
-    if (Math.abs(newRate - currentConfig.tasa_bcv) <= 0.0001) {
+    if (
+      currentConfig.tasa_bcv > 0 &&
+      Math.abs(newRate - currentConfig.tasa_bcv) / currentConfig.tasa_bcv <= 0.001
+    ) {
       return;
     }
 
@@ -143,7 +151,13 @@ const App: React.FC = () => {
 
       if (employees && configData) {
         const totalUsd = employees.reduce((sum, emp) => sum + Number(emp.salario_usd), 0);
-        setEstimatedPayrollVEF(totalUsd * configData.tasa_bcv);
+        const tasa = Number(configData.tasa_bcv);
+        if (tasa > 0 && Number.isFinite(tasa)) {
+          setEstimatedPayrollVEF(totalUsd * tasa);
+        } else {
+          setEstimatedPayrollVEF(0);
+          setBcvSyncError(true);
+        }
       }
     } catch (err) {
       console.error('Error cargando datos iniciales:', err);
@@ -248,7 +262,7 @@ const App: React.FC = () => {
     </div>
   );
 
-  const displayName = session.user.user_metadata.full_name || session.user.email;
+  const displayName = session?.user?.user_metadata?.full_name || session?.user?.email || 'Usuario';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">

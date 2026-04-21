@@ -84,15 +84,39 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
     setSelectedEmployeeId(null);
   };
 
-  const handleDeleteClick = async (id: string, nombre: string, apellido: string) => {
-    if (window.confirm(`¿Está seguro de que desea eliminar permanentemente al empleado ${nombre} ${apellido}? Esta acción eliminará todo su historial (nóminas, asistencias, adelantos) de forma irreversible.`)) {
+  const handleDeleteClick = async (id: string, nombre: string, apellido: string, activo: boolean) => {
+    if (activo) {
+      const ok = window.confirm(
+        `¿Desactivar al empleado ${nombre} ${apellido}?\n\n` +
+        `Por obligación de la LOTTT el historial (nóminas, asistencias, adelantos) NO se elimina. ` +
+        `El empleado se marcará como inactivo y dejará de aparecer en procesos de nómina, ` +
+        `pero podrá reactivarse más adelante.`
+      );
+      if (!ok) return;
       try {
-        const { error } = await supabase.from('empleados').delete().eq('id', id);
+        const { error } = await supabase
+          .from('empleados')
+          .update({ activo: false })
+          .eq('id', id);
         if (error) throw error;
-        setEmployees(prev => prev.filter(emp => emp.id !== id));
+        setEmployees(prev => prev.map(emp => emp.id === id ? { ...emp, activo: false } : emp));
       } catch (error: any) {
-        console.error('Error al eliminar empleado:', error);
-        alert(`Hubo un error al intentar eliminar el empleado: ${error.message || 'Error desconocido'}`);
+        console.error('Error al desactivar empleado:', error);
+        alert(`No se pudo desactivar al empleado: ${error.message || 'Error desconocido'}`);
+      }
+    } else {
+      const ok = window.confirm(`¿Reactivar al empleado ${nombre} ${apellido}?`);
+      if (!ok) return;
+      try {
+        const { error } = await supabase
+          .from('empleados')
+          .update({ activo: true })
+          .eq('id', id);
+        if (error) throw error;
+        setEmployees(prev => prev.map(emp => emp.id === id ? { ...emp, activo: true } : emp));
+      } catch (error: any) {
+        console.error('Error al reactivar empleado:', error);
+        alert(`No se pudo reactivar al empleado: ${error.message || 'Error desconocido'}`);
       }
     }
   };
@@ -249,12 +273,16 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
                           <span className="text-lg">📄</span>
                         </a>
                       )}
-                      <button 
-                        onClick={() => handleDeleteClick(emp.id, emp.nombre, emp.apellido)}
-                        className="p-2.5 hover:bg-rose-50 text-slate-300 hover:text-rose-500 rounded-xl transition-all"
-                        title="Eliminar Permanentemente"
+                      <button
+                        onClick={() => handleDeleteClick(emp.id, emp.nombre, emp.apellido, !!emp.activo)}
+                        className={`p-2.5 rounded-xl transition-all ${
+                          emp.activo
+                            ? 'hover:bg-rose-50 text-slate-300 hover:text-rose-500'
+                            : 'hover:bg-emerald-50 text-slate-300 hover:text-emerald-500'
+                        }`}
+                        title={emp.activo ? 'Desactivar Empleado' : 'Reactivar Empleado'}
                       >
-                        <span className="text-lg">🗑️</span>
+                        <span className="text-lg">{emp.activo ? '🗑️' : '↺'}</span>
                       </button>
                     </div>
                   </td>
