@@ -11,6 +11,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test services/*.test.ts",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "vite build && electron-builder --win",
     "electron:build:dir": "vite build && electron-builder --win --dir"

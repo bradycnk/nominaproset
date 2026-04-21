@@ -1,7 +1,48 @@
-import type { Asistencia } from "../types.ts";
+import type { Asistencia, Empleado, ConfigGlobal } from "../types.ts";
 import test from 'node:test';
 import assert from 'node:assert';
-import { calculateDetailedShift, processAttendanceRecords } from './payrollService.ts';
+import {
+  calculateDetailedShift,
+  processAttendanceRecords,
+  calculatePayroll,
+  calculateLOTTTEarnings,
+  calculateSeniorityYears,
+  LOTTT_RECARGOS,
+} from './payrollService.ts';
+
+const mkEmpleado = (overrides: Partial<Empleado> = {}): Empleado =>
+  ({
+    id: 'e1',
+    nombre: 'Juan',
+    apellido: 'Pérez',
+    cedula: 'V-1',
+    cargo: 'Vendedor',
+    telefono: '',
+    fecha_ingreso: '2024-01-15',
+    salario_usd: 100,
+    salario_base_vef: 0,
+    sucursal_id: 's1',
+    activo: true,
+    ...overrides,
+  }) as Empleado;
+
+const mkConfig = (overrides: Partial<ConfigGlobal> = {}): ConfigGlobal =>
+  ({
+    id: 'c1',
+    tasa_bcv: 100,
+    salario_minimo_vef: 130,
+    cestaticket_usd: 40,
+    dias_utilidades: 60,
+    dias_bono_vacacional_base: 15,
+    ...overrides,
+  }) as ConfigGlobal;
+
+const yearsAgo = (n: number) => {
+  const hoy = new Date();
+  return new Date(hoy.getFullYear() - n, hoy.getMonth(), hoy.getDate() - 1)
+    .toISOString()
+    .slice(0, 10);
+};
 
 // Tests for shift crossing midnight
 
@@ -142,6 +183,154 @@ test('processAttendanceRecords: correctly accumulates totals for a single standa
     diasTrabajados: 1,
   });
 });
+
+// =========================================================================
+// Fase 2 — Tests de correcciones LOTTT en calculatePayroll
+// =========================================================================
+
+test('calculateSeniorityYears: empleado reciente cuenta 0 años', () => {
+  const hoy = new Date();
+  const fechaReciente = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 10)
+    .toISOString()
+    .slice(0, 10);
+  assert.strictEqual(calculateSeniorityYears(fechaReciente), 0);
+});
+
+test('calculateSeniorityYears: 5 años cumplidos', () => {
+  assert.strictEqual(calculateSeniorityYears(yearsAgo(5)), 5);
+});
+
+// F2.1: Bono vacacional (Art. 192 LOTTT)
+test('F2.1 bono vacacional: año 0 = 15 días base', () => {
+  const hoy = new Date();
+  const reciente = new Date(hoy.getFullYear(), hoy.getMonth() - 6, hoy.getDate())
+    .toISOString()
+    .slice(0, 10);
+  const r = calculatePayroll(mkEmpleado({ fecha_ingreso: reciente }), mkConfig(), 15, 'Q1');
+  assert.strictEqual(r.anios_servicio, 0);
+  assert.strictEqual(r.dias_vacaciones_anuales, 15);
+});
+
+test('F2.1 bono vacacional: año 1 = 16 días (base + 1 por año servicio, sin -1 offset)', () => {
+  const r = calculatePayroll(mkEmpleado({ fecha_ingreso: yearsAgo(1) }), mkConfig(), 15, 'Q1');
+  assert.strictEqual(r.anios_servicio, 1);
+  assert.strictEqual(r.dias_vacaciones_anuales, 16);
+});
+
+test('F2.1 bono vacacional: tope 30 días a los 15+ años', () => {
+  const r = calculatePayroll(mkEmpleado({ fecha_ingreso: yearsAgo(20) }), mkConfig(), 15, 'Q1');
+  assert.strictEqual(r.dias_vacaciones_anuales, 30);
+});
+
+// F2.6: Utilidades clamp (Art. 131 LOTTT)
+test('F2.6 utilidades: clamp a 30 si config es menor', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig({ dias_utilidades: 10 }), 15, 'Q1');
+  assert.strictEqual(r.dias_utilidades_anuales, 30);
+});
+
+test('F2.6 utilidades: clamp a 120 si config es mayor', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig({ dias_utilidades: 180 }), 15, 'Q1');
+  assert.strictEqual(r.dias_utilidades_anuales, 120);
+});
+
+test('F2.6 utilidades: respeta valor dentro del rango', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig({ dias_utilidades: 60 }), 15, 'Q1');
+  assert.strictEqual(r.dias_utilidades_anuales, 60);
+});
+
+// F2.4: FAOV sobre salario integral (Art. 30 Ley Vivienda)
+test('F2.4 FAOV: se calcula sobre salario integral, no solo sobre earnings normal', () => {
+  const emp = mkEmpleado({ salario_usd: 100 }); // 10000 VEF/mes
+  const r = calculatePayroll(emp, mkConfig(), 15, 'Q1');
+  // salarioDiarioNormal ≈ 333.33
+  // alicBV = 333.33 * 15 / 360 ≈ 13.889
+  // alicUtil = 333.33 * 60 / 360 ≈ 55.556
+  // integral ≈ 402.78
+  // FAOV 15d = 402.78 * 15 * 0.01 ≈ 60.417
+  assert.ok(r.deduccion_faov > 60 && r.deduccion_faov < 61,
+    `FAOV esperado ~60.42, obtenido ${r.deduccion_faov}`);
+});
+
+// F2.5: IVSS tope (Art. 59 LSS)
+test('F2.5 IVSS: aplica tope de 5 SM mensuales prorrateados', () => {
+  const config = mkConfig({ salario_minimo_vef: 130 }); // tope mensual = 650
+  const empAlto = mkEmpleado({ salario_base_vef: 100000 });
+  const r = calculatePayroll(empAlto, config, 15, 'Q1');
+  // baseImponible = 650/30 * 15 = 325
+  // IVSS = 325 * 0.04 = 13
+  assert.ok(Math.abs(r.deduccion_ivss - 13) < 0.01,
+    `IVSS esperado 13, obtenido ${r.deduccion_ivss}`);
+  assert.ok(Math.abs(r.deduccion_spf - 325 * 0.005) < 0.01);
+});
+
+// F2.3: Prorateo cestaticket
+test('F2.3 cestaticket: Q1 no paga', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig(), 15, 'Q1');
+  assert.strictEqual(r.bono_alimentacion_vef, 0);
+});
+
+test('F2.3 cestaticket: Q2 paga completo sin faltas', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig(), 15, 'Q2');
+  assert.strictEqual(r.bono_alimentacion_vef, 40 * 100);
+});
+
+test('F2.3 cestaticket: Q2 con 3 faltas injustificadas descuenta 10%', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig(), 15, 'Q2', undefined, {
+    faltasInjustificadas: 3,
+  });
+  assert.strictEqual(r.bono_alimentacion_vef, 3600); // 4000 * 0.9
+});
+
+test('F2.3 cestaticket: faltas extremas no genera valor negativo', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig(), 15, 'Q2', undefined, {
+    faltasInjustificadas: 50,
+  });
+  assert.strictEqual(r.bono_alimentacion_vef, 0);
+});
+
+test('F2.3 cestaticket: omitirCestaticket fuerza 0 aún en Q2', () => {
+  const r = calculatePayroll(mkEmpleado(), mkConfig(), 15, 'Q2', undefined, {
+    omitirCestaticket: true,
+  });
+  assert.strictEqual(r.bono_alimentacion_vef, 0);
+});
+
+// F2.2: calculateLOTTTEarnings — centralización de recargos Arts. 117/118/120
+test('F2.2 calculateLOTTTEarnings: sumatoria correcta de componentes', () => {
+  const emp = mkEmpleado({ salario_usd: 300 }); // 30000/mes → 1000/día → 125/h
+  const r = calculateLOTTTEarnings(emp, mkConfig(), {
+    diasTrabajados: 12,
+    totalExtraDiurna: 2,
+    totalExtraNocturna: 1,
+    totalNightHours: 4,
+    horasJornadaMixta: 2,
+    domingoLaborado: 1,
+    descansoLaborado: 0,
+    feriadoLaborado: 0,
+    sabadoLaborado: 0,
+  });
+  assert.strictEqual(r.salario_diario, 1000);
+  assert.strictEqual(r.salario_hora, 125);
+  assert.strictEqual(r.dias_laborados, 12000);
+  assert.strictEqual(r.domingo_laborado, 1500);        // 1 * 1000 * 1.5
+  assert.strictEqual(r.hora_extra_diurna, 375);         // 2 * 125 * 1.5
+  assert.strictEqual(r.hora_extra_nocturna, 243.75);    // 1 * 125 * 1.95
+  assert.strictEqual(r.bono_nocturno, 150);             // 4 * 125 * 0.3
+  assert.strictEqual(r.bono_jornada_mixta, 75);         // 2 * 125 * 0.3
+});
+
+test('F2.2 LOTTT_RECARGOS: constantes coinciden con ley', () => {
+  assert.strictEqual(LOTTT_RECARGOS.BONO_NOCTURNO, 0.30);
+  assert.strictEqual(LOTTT_RECARGOS.HORA_EXTRA_DIURNA, 1.50);
+  assert.strictEqual(LOTTT_RECARGOS.HORA_EXTRA_NOCTURNA, 1.95);
+  assert.strictEqual(LOTTT_RECARGOS.DIA_DESCANSO_LABORADO, 1.50);
+  assert.strictEqual(LOTTT_RECARGOS.DIA_DOMINGO_LABORADO, 1.50);
+  assert.strictEqual(LOTTT_RECARGOS.DIA_FERIADO_LABORADO, 1.50);
+});
+
+// =========================================================================
+// Fin tests Fase 2
+// =========================================================================
 
 test('processAttendanceRecords: correctly accumulates totals across multiple shifts and distinct days', () => {
   const asistencias: Asistencia[] = [

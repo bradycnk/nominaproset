@@ -179,23 +179,107 @@ export const calculateSeniorityYears = (fechaIngreso: string): number => {
   return anios < 0 ? 0 : anios;
 };
 
+// Recargos LOTTT expuestos como constantes para re-uso en UI
+export const LOTTT_RECARGOS = {
+  BONO_NOCTURNO: 0.30,       // Art. 117: 30% sobre hora ordinaria
+  HORA_EXTRA_DIURNA: 1.50,   // Art. 118: 50% de recargo (factor total 1.5x)
+  HORA_EXTRA_NOCTURNA: 1.95, // Art. 117+118: 1.30 * 1.50
+  DIA_DESCANSO_LABORADO: 1.50, // Art. 120: 50% recargo
+  DIA_DOMINGO_LABORADO: 1.50,  // Art. 120
+  DIA_FERIADO_LABORADO: 1.50,  // Art. 120
+};
+
+/**
+ * Desglose de horas y días provenientes de asistencia (processAttendanceRecords).
+ * Usado por calculateLOTTTEarnings para armar las asignaciones del recibo.
+ */
+export interface HoursBreakdown {
+  diasTrabajados: number;
+  totalExtraDiurna: number;
+  totalExtraNocturna: number;
+  totalNightHours: number;       // horas físicas nocturnas (para bono Art. 117)
+  horasJornadaMixta?: number;    // solo de turnos clasificados Mixta (subset de totalNightHours)
+  domingoLaborado?: number;      // cantidad de domingos presentes
+  sabadoLaborado?: number;       // cantidad de sábados presentes
+  feriadoLaborado?: number;      // cantidad de feriados
+  descansoLaborado?: number;     // días de descanso trabajados adicionales
+}
+
+/**
+ * Calcula las asignaciones LOTTT en VEF a partir de un desglose de horas/días.
+ * Centraliza las fórmulas que antes estaban duplicadas en PayrollProcessor.
+ *
+ * Art. 117: bono nocturno = 30% sobre hora ordinaria por horas en bloque 19:00-05:00
+ * Art. 118: hora extra diurna = 150% de la hora ordinaria
+ * Art. 117+118: hora extra nocturna = 195% (1.30 * 1.50) de la hora ordinaria
+ * Art. 120: domingo/feriado/descanso laborado = 150% del día
+ */
+export const calculateLOTTTEarnings = (
+  empleado: Empleado,
+  config: ConfigGlobal,
+  breakdown: HoursBreakdown
+) => {
+  const tasa = config.tasa_bcv;
+  const sueldoMensualVef = empleado.salario_base_vef > 0
+    ? empleado.salario_base_vef
+    : (empleado.salario_usd * tasa);
+  const salarioDiario = sueldoMensualVef / 30;
+  const salarioHora = salarioDiario / 8;
+
+  const diasLaborados = breakdown.diasTrabajados * salarioDiario;
+  const descansoLab = (breakdown.descansoLaborado ?? 0) * salarioDiario * LOTTT_RECARGOS.DIA_DESCANSO_LABORADO;
+  const domLab = (breakdown.domingoLaborado ?? 0) * salarioDiario * LOTTT_RECARGOS.DIA_DOMINGO_LABORADO;
+  const ferLab = (breakdown.feriadoLaborado ?? 0) * salarioDiario * LOTTT_RECARGOS.DIA_FERIADO_LABORADO;
+  const extDiur = breakdown.totalExtraDiurna * salarioHora * LOTTT_RECARGOS.HORA_EXTRA_DIURNA;
+  const extNoc = breakdown.totalExtraNocturna * salarioHora * LOTTT_RECARGOS.HORA_EXTRA_NOCTURNA;
+  const bonoNoc = breakdown.totalNightHours * salarioHora * LOTTT_RECARGOS.BONO_NOCTURNO;
+  const bonoMix = (breakdown.horasJornadaMixta ?? 0) * salarioHora * LOTTT_RECARGOS.BONO_NOCTURNO;
+
+  const total = diasLaborados + descansoLab + domLab + ferLab + extDiur + extNoc + bonoNoc + bonoMix;
+
+  return {
+    salario_diario: salarioDiario,
+    salario_hora: salarioHora,
+    dias_laborados: diasLaborados,
+    descanso_laborado: descansoLab,
+    domingo_laborado: domLab,
+    feriado_laborado: ferLab,
+    hora_extra_diurna: extDiur,
+    hora_extra_nocturna: extNoc,
+    bono_nocturno: bonoNoc,
+    bono_jornada_mixta: bonoMix,
+    total,
+  };
+};
+
+export interface PayrollOptions {
+  /** Faltas injustificadas en la quincena; resta del cestaticket proporcionalmente. */
+  faltasInjustificadas?: number;
+  /** Si true, omite cesta ticket en el cómputo (p.ej. empleado recién ingresado sin derecho). */
+  omitirCestaticket?: boolean;
+}
+
 export const calculatePayroll = (
   empleado: Empleado,
   config: ConfigGlobal,
   diasTrabajados: number = 15, // Por defecto quincenal
   periodo: 'Q1' | 'Q2' = 'Q1',
-  earnings?: number
+  earnings?: number,
+  options?: PayrollOptions
 ) => {
   const tasa = config.tasa_bcv;
-  const sueldoMensualVef = empleado.salario_base_vef > 0 
-    ? empleado.salario_base_vef 
+  const sueldoMensualVef = empleado.salario_base_vef > 0
+    ? empleado.salario_base_vef
     : (empleado.salario_usd * tasa);
   const salarioDiarioNormal = sueldoMensualVef / 30;
   const sueldoPeriodoVef = salarioDiarioNormal * diasTrabajados;
 
   const aniosServicio = calculateSeniorityYears(empleado.fecha_ingreso);
-  const diasBonoVacacional = Math.min(30, config.dias_bono_vacacional_base + Math.max(0, aniosServicio - 1));
-  const diasUtilidades = config.dias_utilidades;
+  // Art. 192 LOTTT: bono vacacional = 15 días base + 1 día por cada año de servicio,
+  // máximo 30 días. Año 1 = 15, año 2 = 16, … año 16 en adelante = 30.
+  const diasBonoVacacional = Math.min(30, config.dias_bono_vacacional_base + Math.max(0, aniosServicio));
+  // Art. 131 LOTTT: utilidades entre 30 y 120 días. Clamp defensivo por si la config viene mal.
+  const diasUtilidades = Math.min(120, Math.max(30, config.dias_utilidades));
 
   const alicuotaBonoVacacionalDiaria = (salarioDiarioNormal * diasBonoVacacional) / 360;
   const alicuotaUtilidadesDiaria = (salarioDiarioNormal * diasUtilidades) / 360;
@@ -204,20 +288,28 @@ export const calculatePayroll = (
   const salarioMinimo = config.salario_minimo_vef;
   const topeIvss = salarioMinimo * TOPE_IVSS_SALARIOS_MINIMOS;
   const baseCalculo = earnings !== undefined ? earnings : sueldoPeriodoVef;
-  
+
   let deduccionIvss = 0;
   let deduccionSpf = 0;
   let deduccionFaov = 0;
 
   if (baseCalculo > 0) {
+    // Tope IVSS/SPF: 5 SM mensuales prorrateados al período (Art. 59 Ley del Seguro Social)
     const baseImponiblePeriodo = Math.min(baseCalculo, (topeIvss / 30) * diasTrabajados);
     deduccionIvss = baseImponiblePeriodo * 0.04;
     deduccionSpf = baseImponiblePeriodo * 0.005;
-    deduccionFaov = baseCalculo * 0.01;
+    // FAOV (Art. 30 Ley Régimen Prestacional de Vivienda): 1% sobre salario INTEGRAL,
+    // no sobre el neto o el base normal. Integral incluye alícuotas de utilidades y bono vacacional.
+    const baseFaovPeriodo = salarioDiarioIntegral * diasTrabajados;
+    deduccionFaov = baseFaovPeriodo * 0.01;
   }
 
   const cestaticketMensualVef = config.cestaticket_usd * tasa;
-  const bonoAlimentacionVef = periodo === 'Q2' ? cestaticketMensualVef : 0;
+  const faltas = Math.max(0, options?.faltasInjustificadas ?? 0);
+  const diasCestaBase = 30; // el cestaticket se paga sobre 30 días calendario del mes
+  const factorCesta = Math.max(0, Math.min(1, (diasCestaBase - faltas) / diasCestaBase));
+  const cestaticketProrateado = cestaticketMensualVef * factorCesta;
+  const bonoAlimentacionVef = (options?.omitirCestaticket || periodo !== 'Q2') ? 0 : cestaticketProrateado;
 
   const totalDeducciones = deduccionIvss + deduccionSpf + deduccionFaov;
   const netoPagarVef = baseCalculo + bonoAlimentacionVef - totalDeducciones;
@@ -241,23 +333,23 @@ export const calculatePayroll = (
   };
 };
 
-export const fetchBcvRate = async (): Promise<number> => {
+export const fetchBcvRate = async (): Promise<number | null> => {
   try {
     const response = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
     if (!response.ok) throw new Error('API response not ok');
     const data = await response.json();
-    
+
     // El API de ve.dolarapi.com devuelve el campo 'promedio' para la tasa oficial
-    const rate = data.promedio || data.price || data.valor;
-    
-    if (!rate || isNaN(rate)) {
+    const rate = Number(data.promedio ?? data.price ?? data.valor);
+
+    if (!Number.isFinite(rate) || rate <= 0) {
       throw new Error('Invalid rate format');
     }
-    
+
     return rate;
   } catch (error) {
     console.error("Error fetching BCV rate:", error);
-    // Intentar un fallback si falla el principal (opcional, por ahora retornamos un valor seguro o el actual)
-    return 0; // Retornamos 0 para indicar que falló y manejarlo arriba
+    // Devolvemos null para indicar fallo; NO usar 0 porque se propaga como tasa válida.
+    return null;
   }
 };
