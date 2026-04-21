@@ -610,8 +610,9 @@ const PayrollProcessor: React.FC<{
     // Evita doble conteo del recargo 30% Art. 117.
     const bonoNocturnoHoras = Math.max(0, hoursData.totalNightHours - bonoJornadaMixta);
 
-    // Días de descanso: estándar 4 por quincena, ajustados si hay datos de asistencia
-    const diasDescansoCount = hoursData.diasTrabajados > 0 ? Math.max(0, 15 - hoursData.diasTrabajados) : 4;
+    // Días de descanso: calculados a partir de días laborados reales del período. Sin asistencia = 0
+    // (no asumir 4 por defecto para no arrastrar valores entre quincenas).
+    const diasDescansoCount = hoursData.diasTrabajados > 0 ? Math.max(0, 15 - hoursData.diasTrabajados) : 0;
 
     // Verificar si tiene adelantos/préstamos activos
     const empAdelantos = adelantos.filter(a => a.empleado_id === emp.id && a.estado === 'aprobado');
@@ -648,7 +649,9 @@ const PayrollProcessor: React.FC<{
   const getPayrollBreakdown = (emp: Empleado) => {
     if (!config) return null;
 
-    const effectiveConfig = getEffectiveReceiptConfig(emp);
+    // Regenera items dependientes de asistencia por cada período activo (Q1/Q2).
+    // Items no-asistencia (otrasAsignaciones, vales, islr, etc.) se conservan de la plantilla guardada.
+    const effectiveConfig = buildAttendanceDrivenReceiptConfig(emp);
 
     const empAsistencias = attendances.filter(a => a.empleado_id === emp.id);
     const hoursData = processAttendanceRecords(empAsistencias);
@@ -698,9 +701,17 @@ const PayrollProcessor: React.FC<{
     const calc = calculatePayroll(emp, config, 15, periodo, totalAsignaciones);
 
 
-    const cIvss = getValue(effectiveConfig.sso, calc.deduccion_ivss, 1);
-    const cSpf = getValue(effectiveConfig.rpe, calc.deduccion_spf, 1);
-    const cFaov = getValue(effectiveConfig.faov, calc.deduccion_faov, 1);
+    // Deducciones legales y adelantos: siempre se recalculan al período actual.
+    // Los montos guardados en effectiveConfig pueden ser stale (p.ej. IVSS de Q1), así que
+    // solo respetamos el flag `enabled`; el monto viene de calc.deduccion_* / adelantos auto.
+    const autoDeductionCell = (enabled: boolean | undefined, amount: number) =>
+      (enabled ?? true) && amount > 0
+        ? { total: amount, qty: 1, unit: amount }
+        : { total: 0, qty: 0, unit: 0 };
+
+    const cIvss = autoDeductionCell(effectiveConfig.sso?.enabled, calc.deduccion_ivss);
+    const cSpf = autoDeductionCell(effectiveConfig.rpe?.enabled, calc.deduccion_spf);
+    const cFaov = autoDeductionCell(effectiveConfig.faov?.enabled, calc.deduccion_faov);
     const cIslr = getValue(effectiveConfig.islr, 0, 1);
     const cVales = getValue(effectiveConfig.vales, 0, 1);
 
@@ -710,7 +721,7 @@ const PayrollProcessor: React.FC<{
 
     const maxAdelantosPermitido = Math.max(0, totalAsignaciones - (cIvss.total + cSpf.total + cFaov.total + cIslr.total + cVales.total));
     const adelantosCalculados = getAdelantosForPeriod(emp.id, maxAdelantosPermitido);
-    
+
     const autoAdelantoNomina = adelantosCalculados.aplicados
       .filter((item) => item.tipo === 'adelanto_nomina')
       .reduce((sum, item) => sum + item.deducted, 0);
@@ -718,8 +729,8 @@ const PayrollProcessor: React.FC<{
       .filter((item) => item.tipo === 'prestamo_credito')
       .reduce((sum, item) => sum + item.deducted, 0);
 
-    const cAdelantoNomina = getValue(effectiveConfig.adelantoNomina, autoAdelantoNomina, 1);
-    const cPrestamo = getValue(effectiveConfig.prestamo, autoPrestamoCredito, 1);
+    const cAdelantoNomina = autoDeductionCell(effectiveConfig.adelantoNomina?.enabled, autoAdelantoNomina);
+    const cPrestamo = autoDeductionCell(effectiveConfig.prestamo?.enabled, autoPrestamoCredito);
 
     const totalAdelantoNomina = cAdelantoNomina.total;
     const totalPrestamoCredito = cPrestamo.total;
