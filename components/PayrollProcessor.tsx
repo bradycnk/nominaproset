@@ -477,12 +477,16 @@ const PayrollProcessor: React.FC<{
     const tienePrestamo = empAdelantos.some(a => a.tipo === 'prestamo_credito');
 
     // Calcular asignaciones para determinar deducciones
+    // hoursData.totalNightHours ya incluye las horas de turnos Mixta.
+    // Para evitar doble conteo con bonoJornadaMixta, el bono nocturno "puro" excluye las horas Mixtas.
+    const bonoNocturnoHoras = Math.max(0, hoursData.totalNightHours - bonoJornadaMixta);
+
     const aDiasLab = hoursData.diasTrabajados * salarioDiario;
     const aDescanso = diasDescansoCount * salarioDiario;
     const aDescansoLab = descansoLabCount * salarioDiario * 1.5;
     const aDomLab = domingoLaborado * salarioDiario * 1.5;
     const aExtDiur = hoursData.totalExtraDiurna * salarioHora * 1.5;
-    const aBonoNoc = hoursData.totalNightHours * salarioHora * 0.3;
+    const aBonoNoc = bonoNocturnoHoras * salarioHora * 0.3;
     const aBonoMix = bonoJornadaMixta * salarioHora * 0.3;
     const aExtNoc = hoursData.totalExtraNocturna * salarioHora * 1.95;
     const aCesta = calcBase.bono_alimentacion_vef;
@@ -509,7 +513,7 @@ const PayrollProcessor: React.FC<{
       domingoLaborado: { enabled: domingoLaborado > 0, cantidad: domingoLaborado, montoUnitario: salarioDiario * 1.5 },
       horasExtrasDiurnas: { enabled: hoursData.totalExtraDiurna > 0, cantidad: hoursData.totalExtraDiurna, montoUnitario: salarioHora * 1.5 },
       feriadosLaborados: { ...baseConfig.feriadosLaborados, enabled: false, cantidad: 0, montoUnitario: salarioDiario * 1.5 },
-      bonoNocturno: { enabled: hoursData.totalNightHours > 0, cantidad: hoursData.totalNightHours, montoUnitario: salarioHora * 0.3 },
+      bonoNocturno: { enabled: bonoNocturnoHoras > 0, cantidad: bonoNocturnoHoras, montoUnitario: salarioHora * 0.3 },
       turnosLaborados: { ...baseConfig.turnosLaborados, enabled: false },
       bonoJornadaMixta: { enabled: bonoJornadaMixta > 0, cantidad: bonoJornadaMixta, montoUnitario: salarioHora * 0.3 },
       horasExtrasNocturnas: { enabled: hoursData.totalExtraNocturna > 0, cantidad: hoursData.totalExtraNocturna, montoUnitario: salarioHora * 1.95 },
@@ -602,6 +606,10 @@ const PayrollProcessor: React.FC<{
       return shift.shiftType === 'Mixta' ? sum + shift.nightHours : sum;
     }, 0);
 
+    // Bono nocturno "puro" = totalNightHours menos las horas de turnos Mixta (que ya se pagan en bonoJornadaMixta).
+    // Evita doble conteo del recargo 30% Art. 117.
+    const bonoNocturnoHoras = Math.max(0, hoursData.totalNightHours - bonoJornadaMixta);
+
     // Días de descanso: estándar 4 por quincena, ajustados si hay datos de asistencia
     const diasDescansoCount = hoursData.diasTrabajados > 0 ? Math.max(0, 15 - hoursData.diasTrabajados) : 4;
 
@@ -626,7 +634,7 @@ const PayrollProcessor: React.FC<{
       domingoLaborado: withAutoValues('domingoLaborado', domingoLaborado, salarioDiario * 1.5),
       sabadoLaborado: withAutoValues('sabadoLaborado', sabadoLaborado, salarioDiario),
       horasExtrasDiurnas: withAutoValues('horasExtrasDiurnas', hoursData.totalExtraDiurna, salarioHora * 1.5),
-      bonoNocturno: withAutoValues('bonoNocturno', hoursData.totalNightHours, salarioHora * 0.3),
+      bonoNocturno: withAutoValues('bonoNocturno', bonoNocturnoHoras, salarioHora * 0.3),
       // turnosLaborados no se auto-habilita (no se usa en el cálculo LOTTT)
       turnosLaborados: { ...baseConfig.turnosLaborados, enabled: false },
       bonoJornadaMixta: withAutoValues('bonoJornadaMixta', bonoJornadaMixta, salarioHora * 0.3),
@@ -657,6 +665,14 @@ const PayrollProcessor: React.FC<{
        return { total: qty * unit, qty, unit };
     };
 
+    // Horas Mixta se descuentan del bono nocturno para evitar doble pago del recargo 30% (Art. 117).
+    const horasJornadaMixtaDefault = empAsistencias.reduce((sum, att) => {
+      if (att.estado !== 'presente' || !att.hora_entrada || !att.hora_salida) return sum;
+      const shift = calculateDetailedShift(att.hora_entrada, att.hora_salida, att.fecha);
+      return shift.shiftType === 'Mixta' ? sum + shift.nightHours : sum;
+    }, 0);
+    const bonoNocDefault = Math.max(0, hoursData.totalNightHours - horasJornadaMixtaDefault);
+
     // Fórmulas LOTTT estricto
     const diasTrabajadosEfectivos = usaCalculoAsistencia ? hoursData.diasTrabajados : 15;
     const cLaborados = getValue(effectiveConfig.diasLaborados, salarioDiario, diasTrabajadosEfectivos);
@@ -666,19 +682,20 @@ const PayrollProcessor: React.FC<{
     const cDomLab = getValue(effectiveConfig.domingoLaborado, salarioDiario * 1.5, 0); // Art. 120
     const cExtDiur = getValue(effectiveConfig.horasExtrasDiurnas, salarioHora * 1.5, hoursData.totalExtraDiurna); // Art. 118
     const cFerLab = getValue(effectiveConfig.feriadosLaborados, salarioDiario * 1.5, 0); // Art. 120
-    const cBonoNoc = getValue(effectiveConfig.bonoNocturno, salarioHora * 0.30, hoursData.totalNightHours); // Art. 117
+    const cBonoNoc = getValue(effectiveConfig.bonoNocturno, salarioHora * 0.30, bonoNocDefault); // Art. 117 (excluye horas Mixta)
     const cTurnos = { total: 0, qty: 0, unit: 0 }; // Desactivado
-    const cBonoMix = getValue(effectiveConfig.bonoJornadaMixta, salarioHora * 0.30, 0);
+    const cBonoMix = getValue(effectiveConfig.bonoJornadaMixta, salarioHora * 0.30, horasJornadaMixtaDefault);
     const cExtNoc = getValue(effectiveConfig.horasExtrasNocturnas, salarioHora * 1.95, hoursData.totalExtraNocturna); // Art. 117 y 118: (1.30 * 1.5)
     const cCompens = { total: 0, qty: 0, unit: 0 }; // Desactivado
     const cSabLab = { total: 0, qty: 0, unit: 0 }; // Desactivado
     const cCesta = getValue(effectiveConfig.bonoAlimentacion, calcBase.bono_alimentacion_vef, 1);
     const cOtras = getValue(effectiveConfig.otrasAsignaciones, 0, 1);
 
-    const totalAsignaciones = cLaborados.total + cDescanso.total + cDescansoLab.total + cDomLab.total + cExtDiur.total + cFerLab.total + cBonoNoc.total + cTurnos.total + cBonoMix.total + cExtNoc.total + cCompens.total + cSabLab.total + cCesta.total + cOtras.total;
+    // Cestaticket se maneja en recibo aparte — no entra al totalAsignaciones ni al neto de este recibo.
+    const totalAsignaciones = cLaborados.total + cDescanso.total + cDescansoLab.total + cDomLab.total + cExtDiur.total + cFerLab.total + cBonoNoc.total + cTurnos.total + cBonoMix.total + cExtNoc.total + cCompens.total + cSabLab.total + cOtras.total;
 
-    // Recalculate deductions with totalAsignaciones
-    const calc = calculatePayroll(emp, config, 15, periodo, totalAsignaciones - cCesta.total); // Cesta ticket is non-taxable
+    // Deducciones sobre totalAsignaciones (que ya excluye cestaticket: art. 105 LOTTT, no remunerativo)
+    const calc = calculatePayroll(emp, config, 15, periodo, totalAsignaciones);
 
 
     const cIvss = getValue(effectiveConfig.sso, calc.deduccion_ivss, 1);
@@ -776,9 +793,33 @@ const PayrollProcessor: React.FC<{
 
     let y = offsetY + 45;
     pdf.setFontSize(9);
-    pdf.text(`EMPRESA: ${principalBranch?.nombre_id || emp.sucursales?.nombre_id || 'FarmaNomina C.A.'}`, 15, y);
-    pdf.text(`RIF: ${principalBranch?.rif || emp.sucursales?.rif || 'J-12345678-9'}`, pageWidth - 15, y, { align: "right" });
+
+    // Si hay filtro por sucursal activo, el encabezado usa la sucursal asignada al empleado.
+    // Si es "todas las sucursales", el encabezado usa la sucursal principal y se añade
+    // un separador con los datos de la sucursal del empleado.
+    const filtroSucursalActivo = !!selectedBranchId;
+    const empresaHeader = filtroSucursalActivo
+      ? (emp.sucursales?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.')
+      : (principalBranch?.nombre_id || 'FarmaNomina C.A.');
+    const rifHeader = filtroSucursalActivo
+      ? (emp.sucursales?.rif || principalBranch?.rif || 'J-12345678-9')
+      : (principalBranch?.rif || 'J-12345678-9');
+
+    pdf.text(`EMPRESA: ${empresaHeader}`, 15, y);
+    pdf.text(`RIF: ${rifHeader}`, pageWidth - 15, y, { align: "right" });
     y += 6;
+
+    if (!filtroSucursalActivo && emp.sucursales?.nombre_id) {
+      pdf.setFont("courier", "normal");
+      pdf.setFontSize(8);
+      pdf.line(15, y - 4, pageWidth - 15, y - 4);
+      pdf.text(`Sucursal: ${emp.sucursales.nombre_id}`, 15, y);
+      pdf.text(`RIF Sucursal: ${emp.sucursales.rif || ''}`, pageWidth - 15, y, { align: "right" });
+      y += 2;
+      pdf.line(15, y, pageWidth - 15, y);
+      y += 5;
+      pdf.setFontSize(9);
+    }
 
     pdf.setFont("courier", "bold");
     pdf.text(`TRABAJADOR: ${emp.nombre} ${emp.apellido}`, 15, y);
@@ -845,13 +886,13 @@ const PayrollProcessor: React.FC<{
     if (effectiveConfig.domingoLaborado?.enabled) addRow("Domingo laborado", formatQty(cDomLab.qty, "dias"), cDomLab.total, null);
     if (effectiveConfig.horasExtrasDiurnas?.enabled) addRow("Bono extra diurno", cExtDiur.total > 0 ? cExtDiur.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cExtDiur.total, null);
     if (effectiveConfig.feriadosLaborados?.enabled) addRow("Feriado laborado", formatQty(cFerLab.qty, "dias"), cFerLab.total, null);
-    if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono nocturno", cBonoNoc.total > 0 ? cBonoNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoNoc.total, null);
+    if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono por Jornada Nocturna Art 117", cBonoNoc.total > 0 ? cBonoNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoNoc.total, null);
     if (effectiveConfig.turnosLaborados?.enabled) addRow("Turnos laborados", formatQty(cTurnos.qty, "turnos"), cTurnos.total, null);
     if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Bono jornada mixta", cBonoMix.total > 0 ? cBonoMix.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoMix.total, null);
     if (effectiveConfig.horasExtrasNocturnas?.enabled) addRow("Bono extra nocturno", cExtNoc.total > 0 ? cExtNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cExtNoc.total, null);
     if (effectiveConfig.diasCompensatorios?.enabled) addRow("Dias compensatorios", formatQty(cCompens.qty, "dias"), cCompens.total, null);
     if (effectiveConfig.sabadoLaborado?.enabled) addRow("Sabado laborado", formatQty(cSabLab.qty, "dias"), cSabLab.total, null);
-    if (effectiveConfig.bonoAlimentacion?.enabled) addRow("Bono alimentacion", "Periodo", cCesta.total, null, false);
+    // Bono Alimentación (Cestaticket) ahora se emite en un recibo aparte.
     if (effectiveConfig.otrasAsignaciones?.enabled) addRow("Otras asignaciones", cOtras.qty > 0 ? formatQty(cOtras.qty) : "", cOtras.total, null);
 
     if (effectiveConfig.sso?.enabled) addRow("Seguro Social Obligatorio (S.S.O)", "4%", null, cIvss.total);
@@ -901,6 +942,167 @@ const PayrollProcessor: React.FC<{
     }
   };
 
+  // Calcula el monto de cestaticket del período: mensual proporcional a faltas injustificadas.
+  // Se paga una vez al mes (Q2), pero el recibo individual lo emite siempre con el monto mensual completo.
+  const calcularCestaticketEmpleado = (emp: Empleado) => {
+    if (!config) return { monto: 0, faltas: 0, diasEfectivos: 30 };
+    const tasa = Number(config.tasa_bcv) || 0;
+    const cestaMensual = (Number(config.cestaticket_usd) || 0) * tasa;
+    // Contar faltas injustificadas del mes
+    const primerDia = new Date(selectedYear, selectedMonth, 1).toISOString().slice(0, 10);
+    const ultimoDia = new Date(selectedYear, selectedMonth + 1, 0).toISOString().slice(0, 10);
+    const faltas = attendances.filter(a =>
+      a.empleado_id === emp.id &&
+      a.fecha >= primerDia &&
+      a.fecha <= ultimoDia &&
+      a.estado === 'falta'
+    ).length;
+    const diasEfectivos = Math.max(0, 30 - faltas);
+    const factor = Math.max(0, Math.min(1, diasEfectivos / 30));
+    return { monto: cestaMensual * factor, faltas, diasEfectivos };
+  };
+
+  const drawCestaticketReceipt = (pdf: jsPDF, emp: Empleado, offsetY: number) => {
+    const pageWidth = pdf.internal.pageSize.width;
+    const fechaEmision = new Date().toLocaleString('es-VE');
+    const mesNombre = meses[selectedMonth];
+    const { monto, faltas, diasEfectivos } = calcularCestaticketEmpleado(emp);
+
+    try {
+      pdf.addImage(LOGO_URL, 'JPEG', 15, offsetY + 15, 25, 15);
+    } catch (e) {}
+
+    pdf.setFont("courier", "bold");
+    pdf.setFontSize(14);
+    pdf.text("RECIBO DE BONO ALIMENTACIÓN (CESTATICKET)", pageWidth / 2, offsetY + 25, { align: "center" });
+
+    pdf.setFontSize(8);
+    pdf.setFont("courier", "normal");
+    pdf.text(`Emisión: ${fechaEmision}`, pageWidth - 15, offsetY + 15, { align: "right" });
+
+    let y = offsetY + 45;
+    pdf.setFontSize(9);
+
+    const filtroSucursalActivo = !!selectedBranchId;
+    const empresaHeader = filtroSucursalActivo
+      ? (emp.sucursales?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.')
+      : (principalBranch?.nombre_id || 'FarmaNomina C.A.');
+    const rifHeader = filtroSucursalActivo
+      ? (emp.sucursales?.rif || principalBranch?.rif || 'J-12345678-9')
+      : (principalBranch?.rif || 'J-12345678-9');
+
+    pdf.text(`EMPRESA: ${empresaHeader}`, 15, y);
+    pdf.text(`RIF: ${rifHeader}`, pageWidth - 15, y, { align: "right" });
+    y += 6;
+
+    if (!filtroSucursalActivo && emp.sucursales?.nombre_id) {
+      pdf.setFont("courier", "normal");
+      pdf.setFontSize(8);
+      pdf.line(15, y - 4, pageWidth - 15, y - 4);
+      pdf.text(`Sucursal: ${emp.sucursales.nombre_id}`, 15, y);
+      pdf.text(`RIF Sucursal: ${emp.sucursales.rif || ''}`, pageWidth - 15, y, { align: "right" });
+      y += 2;
+      pdf.line(15, y, pageWidth - 15, y);
+      y += 5;
+      pdf.setFontSize(9);
+    }
+
+    pdf.setFont("courier", "bold");
+    pdf.text(`TRABAJADOR: ${emp.nombre} ${emp.apellido}`, 15, y);
+    pdf.text(`C.I.: ${emp.cedula}`, pageWidth - 15, y, { align: "right" });
+    y += 4;
+    pdf.setFont("courier", "normal");
+    pdf.text(`Cargo: ${emp.cargo || 'General'}`, 15, y);
+    pdf.text(`Mes: ${mesNombre} ${selectedYear}`, pageWidth - 15, y, { align: "right" });
+    y += 8;
+
+    pdf.setFont("courier", "bold");
+    pdf.text("CONCEPTO", 15, y);
+    pdf.text("DETALLE", 110, y);
+    pdf.text("MONTO (Bs.)", pageWidth - 15, y, { align: "right" });
+    y += 4;
+    pdf.line(15, y, pageWidth - 15, y);
+    y += 5;
+
+    pdf.setFont("courier", "normal");
+    pdf.text("Bono Alimentación (Cestaticket)", 15, y);
+    pdf.text(`${diasEfectivos}/30 días`, 110, y);
+    pdf.text(monto.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), pageWidth - 15, y, { align: "right" });
+    y += 4;
+
+    if (faltas > 0) {
+      pdf.setFontSize(8);
+      pdf.text(`(Descuento por ${faltas} falta(s) injustificada(s))`, 15, y);
+      pdf.setFontSize(9);
+      y += 4;
+    }
+
+    y += 4;
+    pdf.line(15, y, pageWidth - 15, y);
+    y += 5;
+
+    pdf.setFont("courier", "bold");
+    pdf.text("TOTAL A RECIBIR (Bs.):", 15, y);
+    pdf.text(monto.toLocaleString('es-VE', { minimumFractionDigits: 2 }), pageWidth - 15, y, { align: "right" });
+
+    y += 10;
+    pdf.setFont("courier", "normal");
+    pdf.setFontSize(7);
+    pdf.text("Base legal: Ley del Régimen Prestacional de Empleo — Bono Alimentación.", 15, y);
+    pdf.text("No forma parte del salario (Art. 105 LOTTT).", 15, y + 3);
+
+    y += 15;
+    pdf.line(20, y, 90, y);
+    pdf.setFontSize(9);
+    pdf.text("Firma Trabajador", 35, y + 5);
+    pdf.line(120, y, 190, y);
+    pdf.text("Firma Empleador", 135, y + 5);
+  };
+
+  const generateCestaticketPDF = async (emp: Empleado, doc?: jsPDF) => {
+    if (!config) return;
+    const isGlobal = !!doc;
+    const pdf = doc || new jsPDF({ format: 'legal' });
+    const pageWidth = pdf.internal.pageSize.width;
+
+    drawCestaticketReceipt(pdf, emp, 0);
+
+    // Línea de corte (dos copias por página)
+    pdf.setLineDashPattern([2, 2], 0);
+    pdf.line(5, 177, pageWidth - 5, 177);
+    pdf.setLineDashPattern([], 0);
+    pdf.setFontSize(6);
+    pdf.text("-------------------------------------- Corte por aquí --------------------------------------", pageWidth / 2, 177, { align: "center" });
+
+    drawCestaticketReceipt(pdf, emp, 178);
+
+    if (!isGlobal) {
+      window.open(URL.createObjectURL(pdf.output("blob")), "_blank");
+    }
+  };
+
+  const generateCestaticketGlobalPDF = async () => {
+    if (!config) return;
+    const doc = new jsPDF({ format: 'legal' });
+    const filteredEmps = employees.filter(emp =>
+      (selectedBranchId ? emp.sucursal_id === selectedBranchId : true) && !excludedEmployees[emp.id]
+    );
+
+    if (filteredEmps.length === 0) {
+      alert('No hay empleados para generar recibos de cestaticket.');
+      return;
+    }
+
+    let isFirstPage = true;
+    for (const emp of filteredEmps) {
+      if (!isFirstPage) doc.addPage();
+      await generateCestaticketPDF(emp, doc);
+      isFirstPage = false;
+    }
+
+    window.open(URL.createObjectURL(doc.output("blob")), "_blank");
+  };
+
   const generateReceipt2PDF = async (data: any, doc?: jsPDF) => {
     const isGlobal = !!doc;
     const pdf = doc || new jsPDF({ format: 'legal' });
@@ -939,7 +1141,24 @@ const PayrollProcessor: React.FC<{
     pdf.setFont("helvetica", "bold");
     pdf.text("DATOS DEL BENEFICIARIO", 20, offsetY + 45);
     pdf.setFont("helvetica", "normal");
-    pdf.text(`Empresa: ${principalBranch?.nombre_id || emp.sucursales?.nombre_id || 'FarmaNomina C.A.'} - RIF: ${principalBranch?.rif || emp.sucursales?.rif || 'J-12345678-9'}`, 20, offsetY + 50);
+
+    const filtroSucursalActivo = !!selectedBranchId;
+    const empresaHeader = filtroSucursalActivo
+      ? (emp.sucursales?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.')
+      : (principalBranch?.nombre_id || 'FarmaNomina C.A.');
+    const rifHeader = filtroSucursalActivo
+      ? (emp.sucursales?.rif || principalBranch?.rif || 'J-12345678-9')
+      : (principalBranch?.rif || 'J-12345678-9');
+
+    pdf.text(`Empresa: ${empresaHeader} - RIF: ${rifHeader}`, 20, offsetY + 50);
+
+    if (!filtroSucursalActivo && emp.sucursales?.nombre_id) {
+      pdf.setFontSize(9);
+      pdf.text(`Sucursal: ${emp.sucursales.nombre_id} - RIF: ${emp.sucursales.rif || ''}`, 20, offsetY + 55);
+      pdf.line(20, offsetY + 56, 195, offsetY + 56);
+      pdf.setFontSize(10);
+    }
+
     pdf.text(`Nombres y Apellidos: ${emp.nombre} ${emp.apellido}`, 20, offsetY + 58);
     pdf.text(`Cédula de Identidad: V-${emp.cedula}`, 120, offsetY + 58);
     pdf.text(`Cargo: ${emp.cargo || 'No especificado'}`, 20, offsetY + 64);
@@ -1224,13 +1443,13 @@ const PayrollProcessor: React.FC<{
       if (effectiveConfig.domingoLaborado?.enabled) addRow("Domingo laborado", formatQty(cDomLab.qty, "dias"), cDomLab.total, null);
       if (effectiveConfig.horasExtrasDiurnas?.enabled) addRow("Bono extra diurno", cExtDiur.total > 0 ? cExtDiur.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cExtDiur.total, null);
       if (effectiveConfig.feriadosLaborados?.enabled) addRow("Feriado laborado", formatQty(cFerLab.qty, "dias"), cFerLab.total, null);
-      if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono nocturno", cBonoNoc.total > 0 ? cBonoNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoNoc.total, null);
+      if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono por Jornada Nocturna Art 117", cBonoNoc.total > 0 ? cBonoNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoNoc.total, null);
       if (effectiveConfig.turnosLaborados?.enabled) addRow("Turnos laborados", formatQty(cTurnos.qty, "turnos"), cTurnos.total, null);
       if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Bono jornada mixta", cBonoMix.total > 0 ? cBonoMix.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cBonoMix.total, null);
       if (effectiveConfig.horasExtrasNocturnas?.enabled) addRow("Bono extra nocturno", cExtNoc.total > 0 ? cExtNoc.total.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '', cExtNoc.total, null);
       if (effectiveConfig.diasCompensatorios?.enabled) addRow("Dias compensatorios", formatQty(cCompens.qty, "dias"), cCompens.total, null);
       if (effectiveConfig.sabadoLaborado?.enabled) addRow("Sabado laborado", formatQty(cSabLab.qty, "dias"), cSabLab.total, null);
-      if (effectiveConfig.bonoAlimentacion?.enabled) addRow("Bono alimentacion", "Periodo", cCesta.total, null, false);
+      // Bono Alimentación (Cestaticket) se emite en recibo aparte.
       if (effectiveConfig.otrasAsignaciones?.enabled) addRow("Otras asignaciones", cOtras.qty > 0 ? formatQty(cOtras.qty) : "", cOtras.total, null);
       if (effectiveConfig.sso?.enabled) addRow("Seguro Social Obligatorio (S.S.O)", "4%", null, cIvss.total);
       if (effectiveConfig.rpe?.enabled) addRow("Regimen prestacional de empleo", "0.5%", null, cSpf.total);
@@ -1291,7 +1510,8 @@ const PayrollProcessor: React.FC<{
     const fechaDesde = `${startDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
     const fechaHasta = `${endDay.toString().padStart(2, '0')}/${(selectedMonth + 1).toString().padStart(2, '0')}/${selectedYear}`;
     const fechaEmision = new Date().toLocaleString('es-VE');
-    const tasa = empDataList[0]?.tasa || config?.tasa_bcv || 1;
+    const rawTasa = Number(empDataList[0]?.tasa ?? config?.tasa_bcv ?? 0);
+    const tasa = Number.isFinite(rawTasa) && rawTasa > 0 ? rawTasa : 0.0001;
 
     // --- Header ---
     try { doc.addImage(LOGO_URL, 'JPEG', marginLeft, 12, 25, 15); } catch (e) {}
@@ -1512,7 +1732,8 @@ const PayrollProcessor: React.FC<{
 
     const doc = new jsPDF({ format: 'legal', orientation: 'landscape' });
     const pageWidth = doc.internal.pageSize.width;
-    const tasa = empDataList[0]?.tasa || config?.tasa_bcv || 1;
+    const rawTasa = Number(empDataList[0]?.tasa ?? config?.tasa_bcv ?? 0);
+    const tasa = Number.isFinite(rawTasa) && rawTasa > 0 ? rawTasa : 0.0001;
 
     let logoBase64 = '';
     try { logoBase64 = await getBase64ImageFromUrl(LOGO_URL); } catch (e) {}
@@ -1904,7 +2125,7 @@ const PayrollProcessor: React.FC<{
                      {br.montoBonoNocturno > 0 && (
                         <div title="Recargo legal aplicado por horas en jornada nocturna o por turnos con componente nocturno." className="flex justify-between items-center p-4 bg-indigo-50/30 rounded-2xl">
                            <div>
-                              <p className="font-bold text-slate-700 text-sm">Bono Nocturno (Art. 117)</p>
+                              <p className="font-bold text-slate-700 text-sm">Bono por Jornada Nocturna (Art. 117)</p>
                               <p className="text-[10px] text-slate-400 font-medium">Recargo del 30% sobre {br.hoursData.totalNightHours.toFixed(1)} horas</p>
                            </div>
                            <span className="font-black text-indigo-600">Bs. {br.montoBonoNocturno.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
@@ -1963,12 +2184,20 @@ const PayrollProcessor: React.FC<{
                            <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Neto a Pagar</p>
                            <p className="text-2xl font-black mt-1">Bs. {br.neto.toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
                         </div>
-                        <button 
-                           onClick={() => generatePDF(detailEmployee, br)}
-                           className="bg-emerald-500 hover:bg-emerald-400 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
-                        >
-                           Descargar Recibo
-                        </button>
+                        <div className="flex flex-col gap-2">
+                          <button
+                             onClick={() => generatePDF(detailEmployee, br)}
+                             className="bg-emerald-500 hover:bg-emerald-400 px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
+                          >
+                             Descargar Recibo
+                          </button>
+                          <button
+                             onClick={() => generateCestaticketPDF(detailEmployee)}
+                             className="bg-white/15 hover:bg-white/25 text-white px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border border-white/30"
+                          >
+                             🍽️ Recibo Cestaticket
+                          </button>
+                        </div>
                      </div>
                   </div>
                </div>
@@ -2349,10 +2578,9 @@ const PayrollProcessor: React.FC<{
                     domingoLaborado: { label: "Adicional por domingo lab Art 119-120", unit: "días" },
                     horasExtrasDiurnas: { label: "Hora(s) Extras Diurnas", unit: "horas" },
                     feriadosLaborados: { label: "Adicional por feriados lab Art 119-120", unit: "días" },
-                    bonoNocturno: { label: "Bono Nocturno Art 117", unit: "horas" },
+                    bonoNocturno: { label: "Bono por Jornada Nocturna Art 117", unit: "horas" },
                     bonoJornadaMixta: { label: "Bono por Jornada Mixta Art 117/173-3", unit: "horas" },
                     horasExtrasNocturnas: { label: "Hora(s) Extras Nocturnas", unit: "horas" },
-                    bonoAlimentacion: { label: "Bono Alimentación (Cestaticket)", unit: "fijo" },
                     otrasAsignaciones: { label: "Otras Asignaciones", unit: "cant" },
                     vales: { label: "Vales", unit: "cant" },
                     sso: { label: "S.S.O", unit: "4%" },
@@ -2486,6 +2714,9 @@ const PayrollProcessor: React.FC<{
              <div className="flex flex-wrap gap-1.5">
                <button onClick={generateGlobalPDF} className="bg-slate-800 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-700 transition-colors shadow-lg shadow-slate-800/20 flex items-center gap-1 whitespace-nowrap">
                  <span>📄</span> <span className="hidden sm:inline">Recibo</span> Global
+               </button>
+               <button onClick={generateCestaticketGlobalPDF} className="bg-emerald-600 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20 flex items-center gap-1 whitespace-nowrap">
+                 <span>🍽️</span> Cestaticket General
                </button>
                <button onClick={generateReciboGeneralPDF} className="bg-indigo-700 text-white px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-indigo-800 transition-colors shadow-lg shadow-indigo-700/20 flex items-center gap-1 whitespace-nowrap">
                  <span>📑</span> <span className="hidden sm:inline">Recibo</span> General
@@ -2720,6 +2951,13 @@ const PayrollProcessor: React.FC<{
                         >
                           <span>📄</span> PDF
                         </button>
+                        <button
+                          onClick={() => generateCestaticketPDF(emp)}
+                          className="flex items-center gap-1 px-2 sm:px-3 py-2 bg-amber-100 rounded-lg text-amber-700 hover:bg-amber-600 hover:text-white transition-all text-[10px] font-bold shadow-sm whitespace-nowrap"
+                          title="Descargar Recibo de Cestaticket"
+                        >
+                          <span>🍽️</span> Cesta
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -2775,7 +3013,8 @@ const PayrollProcessor: React.FC<{
             a.empleado_id === emp.id && a.sucursal_id === selectedBranchId
           );
         });
-        const tasa = config?.tasa_bcv || 1;
+        const rawTasa = Number(config?.tasa_bcv ?? 0);
+        const tasa = Number.isFinite(rawTasa) && rawTasa > 0 ? rawTasa : 0.0001;
         const horasBaseQuincena = 120; // 15 días * 8 horas = 120 horas base
 
         const empHoursData = filteredEmps.map(emp => {
@@ -2900,7 +3139,7 @@ const PayrollProcessor: React.FC<{
                           const customDeductUsd = extraDeductions[emp.id] || 0;
                           const isExcluded = excludedEmployees[emp.id] || false;
                           const bBs = isExcluded ? 0 : bonoBs;
-                          return acc + ((bBs / tasa) + customAssignUsd - customDeductUsd) * tasa;
+                          return acc + bBs + (customAssignUsd - customDeductUsd) * tasa;
                         }, 0).toLocaleString('es-VE', {minimumFractionDigits:2, maximumFractionDigits:2})}
                      </div>
                      <div className="text-xs font-bold text-slate-500 mt-0.5">
