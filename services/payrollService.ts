@@ -14,15 +14,45 @@ const NIGHT_END = 5.0;   // 5:00 AM (Día siguiente)
 
 /**
  * Convierte formato HH:MM o ISO/Timestamp String a decimal (Ej: "08:30" -> 8.5, "2026-03-12T08:30:00Z" -> 8.5, "2026-03-12 08:30:00+00" -> 8.5)
+ *
+ * Importante: Supabase usa columnas `timestamptz` con sesión UTC y la app inserta
+ * strings sin offset (ej. "2026-04-15T09:00:00"), por lo que Postgres los guarda
+ * como 09:00 UTC literal. Al leer (vía Supabase JS llegan como "...+00:00") usamos
+ * getUTC* para recuperar la hora EXACTA que digitó el usuario, sin desplazamiento
+ * de timezone local del cliente. De lo contrario, en VE (UTC-4) un turno guardado
+ * a las 09:00 se interpretaría como 05:00 al hacer cálculos LOTTT.
  */
+/**
+ * Normaliza un timestamp de Supabase / construido localmente para que `new Date()`
+ * lo parsee como UTC y getUTC* devuelva la hora literal que digitó el usuario.
+ *
+ * Maneja tres formas:
+ *   1) `2026-04-11 08:00:00+00`     (driver SQL crudo)  → `2026-04-11T08:00:00+00:00`
+ *   2) `2026-04-11T08:00:00+00:00`  (Supabase JS)        → tal cual (con Z fuerza UTC)
+ *   3) `2026-04-11T08:00:00`         (UI local sin offset) → `2026-04-11T08:00:00Z`
+ *
+ * Sin esta normalización, el caso (3) lo interpreta `new Date()` como hora LOCAL,
+ * y getUTCHours() devuelve la hora más el offset del sistema (en VE, +4h).
+ */
+const normalizeTimestamp = (s: string): string => {
+  let out = s.replace(' ', 'T');
+  // Offset corto "+00" → "+00:00"
+  out = out.replace(/([+-]\d{2})$/, '$1:00');
+  // Si no tiene offset ni 'Z', forzamos UTC con 'Z'
+  if (!/(Z|[+-]\d{2}:\d{2})$/.test(out)) {
+    out += 'Z';
+  }
+  return out;
+};
+
 export const timeToDecimal = (timeStr: string): number => {
   if (!timeStr) return 0;
 
   // Si es un timestamp completo (contiene 'T' o formato "YYYY-MM-DD HH:MM")
   if (timeStr.includes('T') || /^\d{4}-\d{2}-\d{2}\s/.test(timeStr)) {
-    const date = new Date(timeStr.replace(' ', 'T'));
+    const date = new Date(normalizeTimestamp(timeStr));
     if (!isNaN(date.getTime())) {
-      return date.getHours() + (date.getMinutes() / 60);
+      return date.getUTCHours() + (date.getUTCMinutes() / 60);
     }
   }
 
@@ -52,8 +82,10 @@ export const calculateDetailedShift = (entrada: string, salida: string, fecha: s
   // Manejo de turno con ISO/Timestamp Strings (Precisión máxima)
   const isTimestamp = (s: string) => s.includes('T') || /^\d{4}-\d{2}-\d{2}\s/.test(s);
   if (isTimestamp(entrada) && isTimestamp(salida)) {
-    const d1 = new Date(entrada.replace(' ', 'T'));
-    const d2 = new Date(salida.replace(' ', 'T'));
+    // Normalizamos para que ambas fechas se interpreten como UTC y el delta
+    // sea independiente de la TZ del cliente.
+    const d1 = new Date(normalizeTimestamp(entrada));
+    const d2 = new Date(normalizeTimestamp(salida));
     const diffMs = d2.getTime() - d1.getTime();
     duration = Math.max(0, diffMs / (1000 * 60 * 60));
     // Ajustamos 'end' para que las funciones de solapamiento funcionen bien (ej: 25h si pasó medianoche)
@@ -287,7 +319,10 @@ export const calculatePayroll = (
 
   const salarioMinimo = config.salario_minimo_vef;
   const topeIvss = salarioMinimo * TOPE_IVSS_SALARIOS_MINIMOS;
-  const baseCalculo = earnings !== undefined ? earnings : sueldoPeriodoVef;
+  // Las deducciones legales (IVSS/SPF/FAOV) son obligatorias y se calculan sobre el salario,
+  // independientemente de si el trabajador registró asistencia. Si las earnings calculadas
+  // por asistencia son 0 (sin horario asignado), caemos al sueldo base del período.
+  const baseCalculo = earnings !== undefined && earnings > 0 ? earnings : sueldoPeriodoVef;
 
   let deduccionIvss = 0;
   let deduccionSpf = 0;

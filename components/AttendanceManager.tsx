@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase.ts';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime.ts';
 import { Empleado, Asistencia } from '../types.ts';
 import { calculateDetailedShift } from '../services/payrollService.ts';
+import { getVenezuelanHolidays, formatLocalDateKey, type HolidayInfo } from '../lib/venezuelanHolidays.ts';
 
 interface CalendarDayDraft {
   id?: string;
@@ -11,70 +13,6 @@ interface CalendarDayDraft {
   hora_salida: string;
   observaciones: string;
 }
-
-interface HolidayInfo {
-  name: string;
-  detail: string;
-}
-
-const pad2 = (value: number) => String(value).padStart(2, '0');
-const formatDateKey = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-
-const getEasterSunday = (year: number) => {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month - 1, day);
-};
-
-const getVenezuelanHolidays = (year: number): Record<string, HolidayInfo> => {
-  const holidays: Record<string, HolidayInfo> = {};
-
-  const addHoliday = (date: Date, name: string, detail: string) => {
-    holidays[formatDateKey(date)] = { name, detail };
-  };
-
-  // Feriados fijos de uso nacional
-  addHoliday(new Date(year, 0, 1), 'Año Nuevo', 'Celebración del inicio de año.');
-  addHoliday(new Date(year, 3, 19), '19 de Abril', 'Declaración de la Independencia de Venezuela (1810).');
-  addHoliday(new Date(year, 4, 1), 'Día del Trabajador', 'Conmemoración internacional del trabajo.');
-  addHoliday(new Date(year, 5, 24), 'Batalla de Carabobo', 'Conmemoración de la Batalla de Carabobo (1821).');
-  addHoliday(new Date(year, 6, 5), 'Día de la Independencia', 'Firma del Acta de la Independencia (1811).');
-  addHoliday(new Date(year, 6, 24), 'Natalicio de Simón Bolívar', 'Conmemoración del nacimiento del Libertador.');
-  addHoliday(new Date(year, 9, 12), 'Día de la Resistencia Indígena', 'Conmemoración de la resistencia de los pueblos originarios.');
-  addHoliday(new Date(year, 11, 24), 'Nochebuena', 'Asueto navideño.');
-  addHoliday(new Date(year, 11, 25), 'Navidad', 'Celebración de la Navidad.');
-  addHoliday(new Date(year, 11, 31), 'Fin de Año', 'Asueto de cierre de año.');
-
-  // Feriados móviles (basados en Pascua)
-  const easterSunday = getEasterSunday(year);
-  const carnavalMonday = new Date(easterSunday);
-  carnavalMonday.setDate(easterSunday.getDate() - 48);
-  const carnavalTuesday = new Date(easterSunday);
-  carnavalTuesday.setDate(easterSunday.getDate() - 47);
-  const holyThursday = new Date(easterSunday);
-  holyThursday.setDate(easterSunday.getDate() - 3);
-  const holyFriday = new Date(easterSunday);
-  holyFriday.setDate(easterSunday.getDate() - 2);
-
-  addHoliday(carnavalMonday, 'Lunes de Carnaval', 'Inicio del asueto de Carnaval.');
-  addHoliday(carnavalTuesday, 'Martes de Carnaval', 'Cierre del asueto de Carnaval.');
-  addHoliday(holyThursday, 'Jueves Santo', 'Conmemoración de Semana Santa.');
-  addHoliday(holyFriday, 'Viernes Santo', 'Conmemoración de Semana Santa.');
-
-  return holidays;
-};
 
 const AttendanceManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'daily' | 'calendar'>('daily');
@@ -114,7 +52,9 @@ const AttendanceManager: React.FC = () => {
   });
   const [savingCalendarDay, setSavingCalendarDay] = useState(false);
 
-  const today = new Date().toISOString().split('T')[0];
+  // Fecha local del usuario; toISOString convierte a UTC y puede dar el día siguiente
+  // si el reloj local está cerca de medianoche en zonas horarias no-UTC.
+  const today = formatLocalDateKey(new Date());
   const holidaysByDate = useMemo(() => getVenezuelanHolidays(selectedYear), [selectedYear]);
 
   useEffect(() => {
@@ -126,6 +66,27 @@ const AttendanceManager: React.FC = () => {
       fetchEmployeeHistory();
     }
   }, [selectedEmployeeId, selectedMonth, selectedYear, activeTab]);
+
+  // Auto-refresh empleados / sucursales / empleado_sucursales data. Skip when
+  // the user has unsaved in-flight edits on the daily form to avoid stomping
+  // their draft.
+  useSupabaseRealtime(
+    'realtime-attendance-support',
+    ['empleados', 'sucursales', 'empleado_sucursales'],
+    () => {
+      const hasUnsavedDraft = JSON.stringify(attendances) !== JSON.stringify(savedAttendances);
+      if (!hasUnsavedDraft) fetchInitialData();
+    }
+  );
+
+  // Auto-refresh the calendar history when viewing it.
+  useSupabaseRealtime(
+    'realtime-attendance-history',
+    ['asistencias'],
+    () => {
+      if (activeTab === 'calendar' && selectedEmployeeId) fetchEmployeeHistory();
+    }
+  );
 
   useEffect(() => {
     setSelectedDate('');
@@ -206,8 +167,8 @@ const AttendanceManager: React.FC = () => {
   };
 
   const fetchEmployeeHistory = async () => {
-    const startDate = new Date(selectedYear, selectedMonth, 1).toISOString().split('T')[0];
-    const endDate = new Date(selectedYear, selectedMonth + 1, 0).toISOString().split('T')[0];
+    const startDate = formatLocalDateKey(new Date(selectedYear, selectedMonth, 1));
+    const endDate = formatLocalDateKey(new Date(selectedYear, selectedMonth + 1, 0));
 
     const { data } = await supabase
       .from('asistencias')
@@ -432,7 +393,7 @@ const AttendanceManager: React.FC = () => {
       if (parseInt(hSal) < parseInt(hEnt)) {
           const tomorro = new Date();
           tomorro.setDate(tomorro.getDate() + 1);
-          fechaSalida = tomorro.toISOString().split('T')[0];
+          fechaSalida = formatLocalDateKey(tomorro);
       }
 
       const { error } = await supabase
@@ -455,8 +416,8 @@ const AttendanceManager: React.FC = () => {
     const startDay = isSecondHalf ? 16 : 1;
     const endDay = isSecondHalf ? new Date(selectedYear, selectedMonth + 1, 0).getDate() : 15;
     
-    const startDate = new Date(selectedYear, selectedMonth, startDay).toISOString().split('T')[0];
-    const endDate = new Date(selectedYear, selectedMonth, endDay).toISOString().split('T')[0];
+    const startDate = formatLocalDateKey(new Date(selectedYear, selectedMonth, startDay));
+    const endDate = formatLocalDateKey(new Date(selectedYear, selectedMonth, endDay));
 
     const now = new Date();
     const rangeEnd = new Date(selectedYear, selectedMonth, endDay);
@@ -506,12 +467,26 @@ const AttendanceManager: React.FC = () => {
     return details.normal + details.extraDiurna + details.extraNocturna + details.descanso;
   };
 
-  const formatDisplayTime = (time?: string) => {
-    if (!time) return '--:--';
-    if (time.includes('T')) {
-      return new Date(time).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
+  /**
+   * Extrae HH:MM de un string. Maneja:
+   *  - "2026-04-11T09:00:00+00:00" (Supabase JS)
+   *  - "2026-04-11 09:00:00+00"    (driver SQL)
+   *  - "09:00"                      (HH:MM literal)
+   *
+   * Importante: NO usa `new Date()` porque éste convertiría el timestamp UTC
+   * a hora local del cliente, mostrando 05:00 en VE para una hora_entrada
+   * guardada como 09:00.
+   */
+  const extractTimeHHMM = (time: string): string => {
+    if (time.length >= 16 && (time[10] === 'T' || time[10] === ' ')) {
+      return time.slice(11, 16);
     }
     return time.slice(0, 5);
+  };
+
+  const formatDisplayTime = (time?: string) => {
+    if (!time) return '--:--';
+    return extractTimeHHMM(time);
   };
 
   const applyQuickTime = (field: 'hora_entrada' | 'hora_salida', value: string) => {
@@ -521,9 +496,7 @@ const AttendanceManager: React.FC = () => {
   // Devuelve indicador AM/PM con período del día para una hora HH:MM
   const getAmPmBadge = (time?: string) => {
     if (!time || time === '--:--') return null;
-    const raw = time.includes('T')
-      ? new Date(time).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false })
-      : time.slice(0, 5);
+    const raw = extractTimeHHMM(time);
     const h = parseInt(raw.slice(0, 2));
     if (isNaN(h)) return null;
     const ampm = h < 12 ? 'AM' : 'PM';
@@ -537,9 +510,7 @@ const AttendanceManager: React.FC = () => {
   // Clasifica el turno según la hora de entrada y el tipo LOTTT
   const getShiftBadge = (horaEntrada?: string, horaSalida?: string, fecha?: string) => {
     if (!horaEntrada) return null;
-    const h = horaEntrada.includes('T')
-      ? new Date(horaEntrada).getHours()
-      : parseInt(horaEntrada.slice(0, 2));
+    const h = parseInt(extractTimeHHMM(horaEntrada).slice(0, 2));
 
     // Si tenemos salida, usamos el tipo LOTTT calculado
     if (horaSalida && fecha) {
@@ -610,7 +581,7 @@ const AttendanceManager: React.FC = () => {
         {blanks.map((_, i) => <div key={`blank-${i}`} className="h-20 bg-transparent md:h-28"></div>)}
 
         {daysInMonth.map(date => {
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = formatLocalDateKey(date);
           const records = employeeHistory.filter(h => h.fecha === dateStr);
           const holiday = holidaysByDate[dateStr];
           const isHoliday = !!holiday;

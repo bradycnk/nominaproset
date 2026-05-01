@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase.ts';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime.ts';
 import { Sucursal } from '../types.ts';
 
 const BranchManager: React.FC = () => {
@@ -27,6 +28,8 @@ const BranchManager: React.FC = () => {
   useEffect(() => {
     fetchBranches();
   }, []);
+
+  useSupabaseRealtime('realtime-branches', ['sucursales'], () => fetchBranches());
 
   const fetchBranches = async () => {
     setLoading(true);

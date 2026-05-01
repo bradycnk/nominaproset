@@ -12,6 +12,7 @@ import SocialBenefitsManager from './components/SocialBenefitsManager.tsx';
 import AIAssistant from './components/AIAssistant.tsx';
 import ThemeEngine from './components/ThemeEngine.tsx';
 import { supabase } from './lib/supabase.ts';
+import { useSupabaseRealtime } from './lib/useSupabaseRealtime.ts';
 import { ConfigGlobal } from './types.ts';
 import { fetchBcvRate } from './services/payrollService';
 
@@ -138,19 +139,18 @@ const App: React.FC = () => {
         syncBcvRate(configData);
       }
 
-      const { count } = await supabase
-        .from('empleados')
-        .select('*', { count: 'exact', head: true })
-        .eq('activo', true);
-      setTotalEmployees(count || 0);
-
+      // Total y compromiso VEF excluyen empleados en estatus 'Vacaciones'
+      // (no entran en la nómina activa del período).
       const { data: employees } = await supabase
         .from('empleados')
-        .select('salario_usd')
+        .select('salario_usd, estado_laboral')
         .eq('activo', true);
 
+      const employeesActivos = (employees || []).filter(e => e.estado_laboral !== 'Vacaciones');
+      setTotalEmployees(employeesActivos.length);
+
       if (employees && configData) {
-        const totalUsd = employees.reduce((sum, emp) => sum + Number(emp.salario_usd), 0);
+        const totalUsd = employeesActivos.reduce((sum, emp) => sum + Number(emp.salario_usd), 0);
         const tasa = Number(configData.tasa_bcv);
         if (tasa > 0 && Number.isFinite(tasa)) {
           setEstimatedPayrollVEF(totalUsd * tasa);
@@ -170,30 +170,17 @@ const App: React.FC = () => {
     }
 
     fetchData();
-
-    const configChannel = supabase
-      .channel('config-updates')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'configuracion_global' },
-        (payload) => {
-          const newConfig = payload.new as ConfigGlobal;
-          setConfig(newConfig);
-          fetchData();
-        }
-      )
-      .subscribe();
-
-    const employeeChannel = supabase
-      .channel('employee-stats-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'empleados' }, () => fetchData())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(configChannel);
-      supabase.removeChannel(employeeChannel);
-    };
   }, [session]);
+
+  useSupabaseRealtime(
+    'realtime-app-shell',
+    [
+      { table: 'configuracion_global', event: 'UPDATE' },
+      { table: 'empleados' },
+    ],
+    () => fetchData(),
+    { enabled: !!session }
+  );
 
   if (loading) {
     return (

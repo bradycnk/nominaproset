@@ -1,7 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime';
 import { Empleado, ConfigGlobal } from '../types';
+import { formatDateVE } from '../lib/venezuelanHolidays';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -18,6 +20,15 @@ const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employeeId, onBack, c
   useEffect(() => {
     fetchEmployee();
   }, [employeeId]);
+
+  const realtimeTables = useMemo(
+    () => [
+      { table: 'empleados', filter: `id=eq.${employeeId}` },
+      { table: 'cargas_familiares', filter: `empleado_id=eq.${employeeId}` },
+    ],
+    [employeeId]
+  );
+  useSupabaseRealtime(`realtime-employee-${employeeId}`, realtimeTables, () => fetchEmployee());
 
   const fetchEmployee = async () => {
     setLoading(true);
@@ -97,7 +108,7 @@ const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employeeId, onBack, c
       ['Nacionalidad', employee.nacionalidad || 'N/A'],
       ['Sexo', employee.sexo || 'N/A'],
       ['Estado Civil', employee.estado_civil || 'N/A'],
-      ['Fecha de Nacimiento', employee.fecha_nacimiento ? new Date(employee.fecha_nacimiento).toLocaleDateString('es-VE') : 'N/A'],
+      ['Fecha de Nacimiento', formatDateVE(employee.fecha_nacimiento)],
       ['Lugar de Nacimiento', employee.lugar_nacimiento || 'N/A'],
       ['Email Personal', employee.email_personal || 'N/A'],
       ['Teléfono Móvil', employee.telefono_movil || 'N/A'],
@@ -129,7 +140,7 @@ const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employeeId, onBack, c
       ['Departamento', employee.departamento || 'N/A'],
       ['Tipo de Contrato', employee.tipo_contrato || 'N/A'],
       ['Tipo de Jornada', employee.tipo_jornada || 'N/A'],
-      ['Fecha de Ingreso', new Date(employee.fecha_ingreso).toLocaleDateString('es-VE')],
+      ['Fecha de Ingreso', formatDateVE(employee.fecha_ingreso)],
       ['Salario USD', `$${Number(employee.salario_usd).toLocaleString('en-US', { minimumFractionDigits: 2 })}`],
       ['Estatus', employee.activo ? 'Activo' : 'Inactivo'],
     ];
@@ -271,7 +282,7 @@ const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employeeId, onBack, c
              </div>
              <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Fecha Nacimiento</label>
-                <p className="text-slate-700 font-medium">{employee.fecha_nacimiento ? new Date(employee.fecha_nacimiento).toLocaleDateString('es-VE') : 'N/A'}</p>
+                <p className="text-slate-700 font-medium">{formatDateVE(employee.fecha_nacimiento)}</p>
              </div>
              <div className="col-span-full">
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Lugar de Nacimiento</label>
@@ -312,11 +323,11 @@ const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employeeId, onBack, c
              </div>
              <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Fecha Ingreso</label>
-                <p className="text-slate-700 font-medium">{new Date(employee.fecha_ingreso).toLocaleDateString('es-VE')}</p>
+                <p className="text-slate-700 font-medium">{formatDateVE(employee.fecha_ingreso)}</p>
              </div>
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Fecha Inicio Contrato</label>
-                <p className="text-slate-700 font-medium">{employee.fecha_inicio_contrato ? new Date(employee.fecha_inicio_contrato).toLocaleDateString('es-VE') : 'N/A'}</p>
+                <p className="text-slate-700 font-medium">{formatDateVE(employee.fecha_inicio_contrato)}</p>
              </div>
              <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Salario USD</label>

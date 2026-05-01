@@ -7,6 +7,7 @@ import {
   calculatePayroll,
   calculateLOTTTEarnings,
   calculateSeniorityYears,
+  timeToDecimal,
   LOTTT_RECARGOS,
 } from './payrollService.ts';
 
@@ -45,6 +46,55 @@ const yearsAgo = (n: number) => {
 };
 
 // Tests for shift crossing midnight
+
+// --- Regresión TZ: la DB guarda hora_entrada/hora_salida como timestamptz UTC.
+// El parsing debe usar getUTC* para no desplazar la hora según la TZ del cliente.
+test('timeToDecimal: HH:MM literal', () => {
+  assert.strictEqual(timeToDecimal('08:30'), 8.5);
+  assert.strictEqual(timeToDecimal('00:00'), 0);
+  assert.strictEqual(timeToDecimal('23:59'), 24.0);
+});
+
+test('timeToDecimal: timestamp con offset UTC retorna la hora UTC, no la local', () => {
+  // Supabase retorna "2026-04-15T09:00:00+00:00" para una hora_entrada guardada
+  // como "09:00". Cualquier cliente (VE -4, Madrid +1, Tokio +9) debe leer 9.0.
+  assert.strictEqual(timeToDecimal('2026-04-15T09:00:00+00:00'), 9.0);
+  assert.strictEqual(timeToDecimal('2026-04-15 09:00:00+00'), 9.0);
+  assert.strictEqual(timeToDecimal('2026-04-15T18:30:00+00:00'), 18.5);
+  assert.strictEqual(timeToDecimal('2026-04-15T00:00:00Z'), 0);
+});
+
+test('timeToDecimal: timestamp SIN offset se trata como UTC (no como hora local)', () => {
+  // El AttendanceManager construye `${selectedDate}T${hora}:00` sin offset al
+  // calcular el preview de la jornada. `new Date()` lo interpretaba como hora
+  // local y getUTCHours sumaba el offset del cliente, generando "horas nocturnas
+  // fantasma" para turnos diurnos. Debe retornar la hora literal sin desplazar.
+  assert.strictEqual(timeToDecimal('2026-04-11T08:00:00'), 8.0);
+  assert.strictEqual(timeToDecimal('2026-04-11T18:00:00'), 18.0);
+  assert.strictEqual(timeToDecimal('2026-04-11T22:30:00'), 22.5);
+});
+
+test('calculateDetailedShift: turno 08:00→18:00 sin offset NO debe contar horas nocturnas', () => {
+  // Regresión del bug donde el preview en AttendanceManager mostraba 3.0h
+  // nocturnas para una jornada diurna porque `${date}T${hora}` se interpretaba
+  // como hora local en VE (UTC-4) y getUTCHours desplazaba el inicio a 12.
+  const r = calculateDetailedShift('2026-04-11T08:00:00', '2026-04-11T18:00:00', '2026-04-11');
+  assert.strictEqual(r.nightHours, 0, 'jornada 08-18 no tiene horas físicas nocturnas');
+  assert.strictEqual(r.shiftType, 'Diurna');
+});
+
+test('calculateDetailedShift: turno con timestamps UTC equivale al turno con HH:MM', () => {
+  // Mismo turno 18:00→02:00 expresado en HH:MM y como timestamps UTC.
+  // Si timeToDecimal usara getHours() (TZ local), ambos resultados diferirían
+  // en zonas no-UTC y la clasificación de jornada se rompería.
+  const conLiteral = calculateDetailedShift('18:00', '02:00', '2026-04-15');
+  const conTimestamp = calculateDetailedShift(
+    '2026-04-15T18:00:00+00:00',
+    '2026-04-16T02:00:00+00:00',
+    '2026-04-15'
+  );
+  assert.deepStrictEqual(conTimestamp, conLiteral);
+});
 
 test('calculateDetailedShift: empty inputs return defaults', () => {
   const result = calculateDetailedShift('', '', '2023-10-18');
@@ -249,6 +299,20 @@ test('F2.4 FAOV: se calcula sobre salario integral, no solo sobre earnings norma
   // FAOV 15d = 402.78 * 15 * 0.01 ≈ 60.417
   assert.ok(r.deduccion_faov > 60 && r.deduccion_faov < 61,
     `FAOV esperado ~60.42, obtenido ${r.deduccion_faov}`);
+});
+
+// Sin horario asignado: deducciones obligatorias siguen vigentes
+test('deducciones se calculan sobre salario base si earnings es 0 (sin horario asignado)', () => {
+  const emp = mkEmpleado({ salario_usd: 100 }); // 10000 VEF/mes => 5000/quincena
+  const r = calculatePayroll(emp, mkConfig(), 15, 'Q1', 0);
+  // Con earnings=0 cae a sueldoPeriodoVef = 5000.
+  // Tope IVSS prorrateado a quincena = (130*5/30)*15 = 325; min(5000,325)=325.
+  // IVSS = 325*0.04 = 13; SPF = 325*0.005 = 1.625.
+  // FAOV se calcula sobre integral, no se topea.
+  assert.ok(r.deduccion_ivss > 0, 'IVSS debe aparecer aunque no haya horario');
+  assert.ok(r.deduccion_spf > 0, 'SPF debe aparecer aunque no haya horario');
+  assert.ok(r.deduccion_faov > 0, 'FAOV debe aparecer aunque no haya horario');
+  assert.ok(Math.abs(r.deduccion_ivss - 13) < 0.01, `IVSS esperado 13, obtenido ${r.deduccion_ivss}`);
 });
 
 // F2.5: IVSS tope (Art. 59 LSS)

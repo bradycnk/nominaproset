@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime';
 import { ConfigGlobal, Empleado, Asistencia } from '../types';
+import { formatLocalDateKey } from '../lib/venezuelanHolidays.ts';
 import CustomizeDashboardModal from './CustomizeDashboardModal.tsx';
 import EmployeePerformanceCard from './EmployeePerformanceCard.tsx';
 
@@ -44,6 +46,15 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
   const [attendanceToday, setAttendanceToday] = useState({ present: 0, total: 0, reported: false });
   const [daysToNextPayment, setDaysToNextPayment] = useState(0);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [refreshTick, setRefreshTick] = useState(0);
+  // Empleados actualmente en estatus 'Vacaciones' (excluidos de la nómina activa)
+  const [vacationEmployees, setVacationEmployees] = useState<Empleado[]>([]);
+
+  useSupabaseRealtime(
+    'realtime-dashboard',
+    ['empleados', 'asistencias', 'adelantos'],
+    () => setRefreshTick((n) => n + 1)
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,12 +75,13 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
       }
       setDaysToNextPayment(daysLeft);
 
-      // 2. Performance Data — fetch last 3 months
+      // 2. Performance Data — fetch last 3 months. Usamos formatLocalDateKey para
+      // evitar el desfase de toISOString() cuando el cliente está en TZ positiva.
       const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-      const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-      const firstDay3Months = threeMonthsAgo.toISOString().split('T')[0];
-      const lastDayOfMonthISO = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
-      const todayISO = today.toISOString().split('T')[0];
+      const firstDayOfMonth = formatLocalDateKey(new Date(today.getFullYear(), today.getMonth(), 1));
+      const firstDay3Months = formatLocalDateKey(threeMonthsAgo);
+      const lastDayOfMonthISO = formatLocalDateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+      const todayISO = formatLocalDateKey(today);
 
       const months = [
         new Date(today.getFullYear(), today.getMonth() - 2, 1),
@@ -78,13 +90,19 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
       ];
       const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
-      const { data: employees, error: empError } = await supabase.from('empleados').select('*').eq('activo', true);
+      const { data: allEmployees, error: empError } = await supabase.from('empleados').select('*').eq('activo', true);
       if (empError) return;
+
+      // Separar empleados en Vacaciones del resto. Vacaciones NO entran en la nómina
+      // activa (performance, KPIs); aparecen en su propio widget del dashboard.
+      const employees = (allEmployees || []).filter(e => e.estado_laboral !== 'Vacaciones');
+      const onVacation = (allEmployees || []).filter(e => e.estado_laboral === 'Vacaciones');
+      setVacationEmployees(onVacation);
 
       const { data: attendances, error: attError } = await supabase.from('asistencias').select('*').gte('fecha', firstDay3Months).lte('fecha', lastDayOfMonthISO);
       if (attError) return;
 
-      // 3. Today's Attendance
+      // 3. Today's Attendance (solo empleados de la nómina activa, sin Vacaciones)
       const todaysRecords = attendances?.filter(a => a.fecha === todayISO) || [];
       const presentCount = todaysRecords.filter(a => a.estado === 'presente').length;
       setAttendanceToday({
@@ -110,8 +128,8 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
         const absent = empAttendances.filter(a => a.estado === 'falta').length;
 
         const monthlyTrend: MonthlyTrend[] = months.map(m => {
-          const mStart = m.toISOString().split('T')[0];
-          const mEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0).toISOString().split('T')[0];
+          const mStart = formatLocalDateKey(m);
+          const mEnd = formatLocalDateKey(new Date(m.getFullYear(), m.getMonth() + 1, 0));
           const mRecords = attendances?.filter(a => a.empleado_id === emp.id && a.fecha >= mStart && a.fecha <= mEnd) || [];
           return {
             month: monthNames[m.getMonth()],
@@ -148,10 +166,13 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
       }
 
       // Contracts expiring in ≤30 days
+      // Importante: parseamos los componentes manualmente para evitar el off-by-one
+      // que produce `new Date('2025-10-04')` (UTC midnight) en zonas negativas.
       const expiringContracts = employees.filter(emp => {
         if (!emp.fecha_inicio_contrato || !emp.duracion_contrato_meses) return false;
-        const start = new Date(emp.fecha_inicio_contrato);
-        const end = new Date(start.getFullYear(), start.getMonth() + emp.duracion_contrato_meses, start.getDate());
+        const [yy, mm, dd] = emp.fecha_inicio_contrato.split('-').map(Number);
+        if (!yy || !mm || !dd) return false;
+        const end = new Date(yy, mm - 1 + emp.duracion_contrato_meses, dd);
         const diffDays = Math.round((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         return diffDays >= 0 && diffDays <= 30;
       });
@@ -163,7 +184,7 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
     };
 
     fetchData();
-  }, [totalEmployees]); // Re-run if total employees changes
+  }, [totalEmployees, refreshTick]); // Re-run on stat changes or realtime ticks
 
   
   const stats = [
@@ -387,7 +408,50 @@ const DashboardOverview: React.FC<DashboardOverviewProps> = ({ config, totalEmpl
         {bottomEmployee && <EmployeePerformanceCard employee={bottomEmployee.employee} stats={bottomEmployee.stats} monthlyTrend={bottomEmployee.monthlyTrend} rank="Low" />}
       </div>
 
-      <CustomizeDashboardModal 
+      {/* Empleados en estatus 'Vacaciones': excluidos de la nómina activa pero
+          listados aquí para visibilidad operativa de la supervisión. */}
+      {vacationEmployees.length > 0 && (
+        <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 mb-10">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight">Empleados en Vacaciones</h3>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No incluidos en la nómina activa</p>
+              </div>
+            </div>
+            <div className="px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-black">
+              {vacationEmployees.length}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {vacationEmployees.map(emp => (
+              <div
+                key={emp.id}
+                className="flex items-center gap-3 p-4 bg-amber-50/60 border border-amber-100 rounded-2xl hover:bg-amber-50 transition-colors"
+              >
+                <div className="w-10 h-10 rounded-full bg-amber-200 flex items-center justify-center text-amber-900 font-black text-sm shrink-0">
+                  {(emp.nombre?.[0] || '?').toUpperCase()}{(emp.apellido?.[0] || '').toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-black text-slate-800 text-sm truncate">{emp.nombre} {emp.apellido}</p>
+                  <p className="text-[11px] font-semibold text-slate-500 truncate">
+                    {emp.cargo || 'General'} · {emp.cedula}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <CustomizeDashboardModal
         isOpen={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         stats={stats.map(s => s.label)}

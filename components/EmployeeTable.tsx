@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.ts';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime.ts';
 import { Empleado, ConfigGlobal } from '../types.ts';
 import EmployeeModal from './EmployeeModal.tsx';
 import EmployeeProfile from './EmployeeProfile.tsx';
@@ -22,22 +23,12 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
   useEffect(() => {
     fetchEmployees();
     fetchBranches();
-
-    const channel = supabase
-      .channel('schema-db-changes-employees')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'empleados' },
-        () => {
-          fetchEmployees();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
+
+  useSupabaseRealtime('realtime-employee-table', ['empleados', 'sucursales'], () => {
+    fetchEmployees();
+    fetchBranches();
+  });
 
   const fetchBranches = async () => {
     try {

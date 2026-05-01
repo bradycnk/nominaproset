@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useSupabaseRealtime } from '../lib/useSupabaseRealtime';
 import { Empleado, ConfigGlobal } from '../types';
+import { formatDateVE } from '../lib/venezuelanHolidays';
 
 interface SocialBenefitsManagerProps {
   config: ConfigGlobal | null;
@@ -26,6 +28,15 @@ const SocialBenefitsManager: React.FC<SocialBenefitsManagerProps> = ({ config })
   useEffect(() => {
     fetchSummaries();
   }, []);
+
+  useSupabaseRealtime(
+    'realtime-social-benefits',
+    ['empleados', 'historial_prestaciones'],
+    () => {
+      fetchSummaries();
+      if (selectedEmployee) fetchHistory(selectedEmployee.id);
+    }
+  );
 
   const fetchSummaries = async () => {
     setLoading(true);
@@ -121,7 +132,7 @@ const SocialBenefitsManager: React.FC<SocialBenefitsManagerProps> = ({ config })
                 <tr key={s.empleado.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-6 py-4">
                     <div className="font-bold text-slate-700">{s.empleado.nombre} {s.empleado.apellido}</div>
-                    <div className="text-[10px] text-slate-400 font-medium">Ingreso: {new Date(s.empleado.fecha_ingreso).toLocaleDateString()}</div>
+                    <div className="text-[10px] text-slate-400 font-medium">Ingreso: {formatDateVE(s.empleado.fecha_ingreso)}</div>
                   </td>
                   <td className="px-6 py-4">
                     <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[11px] font-black">
