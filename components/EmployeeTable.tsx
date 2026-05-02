@@ -162,6 +162,7 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
         <table className="w-full text-left">
           <thead className="bg-[#F8F9FB] text-slate-400 text-[10px] font-black uppercase tracking-[0.15em] border-b border-slate-50">
             <tr>
+              <th className="px-4 py-5 text-center w-12">#</th>
               <th className="px-8 py-5 text-center w-20">Foto</th>
               <th className="px-8 py-5">Empleado / Sede</th>
               <th className="px-8 py-5">Cédula / RIF</th>
@@ -174,7 +175,7 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
           <tbody className="divide-y divide-slate-50">
             {loading && filteredEmployees.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-8 py-20 text-center">
+                <td colSpan={8} className="px-8 py-20 text-center">
                   <div className="flex flex-col items-center gap-4">
                     <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent animate-spin rounded-full"></div>
                     <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Sincronizando nómina...</span>
@@ -183,14 +184,17 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
               </tr>
             ) : filteredEmployees.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-8 py-20 text-center">
+                <td colSpan={8} className="px-8 py-20 text-center">
                   <div className="text-slate-200 text-5xl mb-4">📂</div>
                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No hay trabajadores en el sistema</p>
                 </td>
               </tr>
             ) : (
-              filteredEmployees.map((emp) => (
+              filteredEmployees.map((emp, idx) => (
                 <tr key={emp.id} className="hover:bg-emerald-50/50 transition-all duration-300 group border-b border-slate-100 last:border-0 hover:shadow-md hover:z-10 relative">
+                  <td className="px-4 py-6 text-center">
+                    <span className="text-xs font-black text-slate-400 tabular-nums">{idx + 1}</span>
+                  </td>
                   <td className="px-8 py-6">
                     <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-white shadow-md flex items-center justify-center overflow-hidden transition-transform group-hover:scale-110">
                       {emp.foto_url ? (
@@ -287,11 +291,27 @@ const EmployeeTable: React.FC<EmployeeTableProps> = ({ config }) => {
          <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em]">Gestión de Nómina Indexada - LOTTT 2024</p>
       </div>
 
-      <EmployeeModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <EmployeeModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         employeeToEdit={selectedEmployee}
         config={config}
+        onSaved={(saved) => {
+          // Update inmediato del estado local: reemplaza la fila si ya existe,
+          // si es un nuevo empleado lo agrega. Evita esperar al debounce de
+          // realtime (300ms+) que puede llegar después de que el usuario
+          // reabra la modal mostrando datos stale.
+          setEmployees(prev => {
+            const exists = prev.some(e => e.id === saved.id);
+            if (exists) return prev.map(e => e.id === saved.id ? saved : e);
+            return [...prev, saved].sort((a, b) =>
+              (a.nombre || '').localeCompare(b.nombre || '')
+            );
+          });
+          // También sincronizamos selectedEmployee para que si el modal se
+          // mantiene abierto (en algún flujo futuro) refleje los datos frescos.
+          setSelectedEmployee(saved);
+        }}
       />
     </div>
   );

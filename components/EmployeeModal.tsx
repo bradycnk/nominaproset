@@ -7,6 +7,12 @@ interface EmployeeModalProps {
   onClose: () => void;
   employeeToEdit?: Empleado | null;
   config: ConfigGlobal | null;
+  /**
+   * Notifica al padre que un empleado fue guardado/creado para que actualice
+   * su estado local inmediatamente sin esperar al debounce de realtime
+   * (300ms+). Crítico para evitar mostrar datos stale al reabrir la modal.
+   */
+  onSaved?: (saved: Empleado) => void;
 }
 
 interface EmployeeForm {
@@ -144,7 +150,7 @@ const tabs: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'familia', label: '6. Cargas Familiares', icon: '👨‍👩‍👧' },
 ];
 
-const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employeeToEdit, config }) => {
+const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employeeToEdit, config, onSaved }) => {
   const [loading, setLoading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('personal');
@@ -195,7 +201,12 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
     };
 
     if (isOpen) init();
-  }, [isOpen, employeeToEdit]);
+    // Importante: dependemos del ID, no de la referencia completa de
+    // `employeeToEdit`. Si dependiéramos de la referencia, cualquier
+    // refetch del padre (por realtime u otra razón) generaría una nueva
+    // referencia y este useEffect resetearía el formulario MIENTRAS el
+    // usuario está editando, descartando sus cambios.
+  }, [isOpen, employeeToEdit?.id]);
 
   if (!isOpen) return null;
 
@@ -311,13 +322,27 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
       };
 
       let empId = employeeToEdit?.id;
+      let savedRow: any = null;
       if (employeeToEdit) {
-        const { error } = await supabase.from('empleados').update(payload).eq('id', empId);
+        // Pedimos el row actualizado de vuelta para reflejar lo que realmente
+        // quedó en BD (incluyendo defaults o triggers) sin depender de realtime.
+        const { data, error } = await supabase
+          .from('empleados')
+          .update(payload)
+          .eq('id', empId)
+          .select('*, sucursales(nombre_id)')
+          .single();
         if (error) throw error;
+        savedRow = data;
       } else {
-        const { data, error } = await supabase.from('empleados').insert([payload]).select().single();
+        const { data, error } = await supabase
+          .from('empleados')
+          .insert([payload])
+          .select('*, sucursales(nombre_id)')
+          .single();
         if (error) throw error;
         empId = data.id;
+        savedRow = data;
       }
 
       if (empId) {
@@ -336,6 +361,10 @@ const EmployeeModal: React.FC<EmployeeModalProps> = ({ isOpen, onClose, employee
           if (familyError) throw familyError;
         }
       }
+
+      // Notifica al padre con el row guardado para update inmediato del estado
+      // local (sin esperar al debounce de realtime).
+      if (savedRow && onSaved) onSaved(savedRow as Empleado);
 
       alert('¡Expediente guardado exitosamente!');
       onClose();

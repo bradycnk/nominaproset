@@ -115,6 +115,7 @@ const SocialBenefitsManager: React.FC<SocialBenefitsManagerProps> = ({ config })
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
               <tr>
+                <th className="px-3 py-4 text-center w-10">#</th>
                 <th className="px-6 py-4">Empleado</th>
                 <th className="px-6 py-4">Días Acum.</th>
                 <th className="px-6 py-4">Total Garantía (Bs.)</th>
@@ -125,11 +126,14 @@ const SocialBenefitsManager: React.FC<SocialBenefitsManagerProps> = ({ config })
             </thead>
             <tbody className="divide-y divide-slate-50">
               {loading ? (
-                <tr><td colSpan={6} className="text-center py-10 text-slate-400">Cargando datos...</td></tr>
+                <tr><td colSpan={7} className="text-center py-10 text-slate-400">Cargando datos...</td></tr>
               ) : error ? (
-                <tr><td colSpan={6} className="text-center py-10 text-red-500 font-semibold">{error}</td></tr>
-              ) : summaries.map((s) => (
+                <tr><td colSpan={7} className="text-center py-10 text-red-500 font-semibold">{error}</td></tr>
+              ) : summaries.map((s, idx) => (
                 <tr key={s.empleado.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-3 py-4 text-center">
+                    <span className="text-xs font-black text-slate-400 tabular-nums">{idx + 1}</span>
+                  </td>
                   <td className="px-6 py-4">
                     <div className="font-bold text-slate-700">{s.empleado.nombre} {s.empleado.apellido}</div>
                     <div className="text-[10px] text-slate-400 font-medium">Ingreso: {formatDateVE(s.empleado.fecha_ingreso)}</div>

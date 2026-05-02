@@ -3,6 +3,13 @@ export interface ReceiptItem {
   enabled: boolean;
   cantidad?: number;
   montoUnitario?: number;
+  /**
+   * Si es true, el valor de cantidad/montoUnitario fue editado manualmente
+   * por el admin desde "Configurar Recibo" y NO debe sobreescribirse con
+   * los cálculos automáticos derivados de asistencia. El "Restablecer"
+   * botón limpia este flag y vuelve al cálculo automático.
+   */
+  manualOverride?: boolean;
 }
 
 export interface ReceiptPrintConfig {

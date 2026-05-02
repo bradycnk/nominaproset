@@ -838,6 +838,7 @@ const AttendanceManager: React.FC = () => {
             <table className="w-full text-left">
               <thead className="bg-[#F8F9FB] text-slate-400 text-[10px] font-black uppercase tracking-[0.15em] border-b border-slate-50">
                 <tr>
+                  <th className="px-4 py-5 text-center w-12">#</th>
                   <th className="px-8 py-5">Empleado</th>
                   <th className="px-8 py-5">Entrada</th>
                   <th className="px-8 py-5">Salida</th>
@@ -846,8 +847,8 @@ const AttendanceManager: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {loading ? (
-                  <tr><td colSpan={4} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
-                ) : employees.filter(emp => (selectedBranchId ? (employeeBranchMap[emp.id]?.includes(selectedBranchId) || emp.sucursal_id === selectedBranchId) : true) && (searchQuery ? `${emp.nombre} ${emp.apellido}`.toLowerCase().includes(searchQuery.toLowerCase()) : true)).map(emp => {                  const att = attendances[emp.id];
+                  <tr><td colSpan={5} className="p-10 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">Sincronizando reloj biométrico...</td></tr>
+                ) : employees.filter(emp => (selectedBranchId ? (employeeBranchMap[emp.id]?.includes(selectedBranchId) || emp.sucursal_id === selectedBranchId) : true) && (searchQuery ? `${emp.nombre} ${emp.apellido}`.toLowerCase().includes(searchQuery.toLowerCase()) : true)).map((emp, idx) => {                  const att = attendances[emp.id];
                   const savedAtt = savedAttendances[emp.id];
 
                   const entrySaved = !!savedAtt?.id; 
@@ -864,6 +865,9 @@ const AttendanceManager: React.FC = () => {
 
                   return (
                     <tr key={emp.id} className={`transition-colors hover:brightness-95 ${rowBg}`}>
+                      <td className="px-4 py-5 text-center">
+                        <span className="text-xs font-black text-slate-400 tabular-nums">{idx + 1}</span>
+                      </td>
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border-2 border-white shadow-sm">

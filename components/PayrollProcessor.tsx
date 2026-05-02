@@ -64,6 +64,8 @@ const normalizeReceiptItem = (raw: any, fallback: any) => {
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : fallback.enabled,
     cantidad: typeof raw.cantidad === 'number' ? raw.cantidad : fallback.cantidad,
     montoUnitario: typeof raw.montoUnitario === 'number' ? raw.montoUnitario : fallback.montoUnitario,
+    // Preserva el flag de override manual (si fue editado desde "Configurar Recibo")
+    manualOverride: typeof raw.manualOverride === 'boolean' ? raw.manualOverride : false,
   };
 };
 
@@ -122,6 +124,10 @@ const PayrollProcessor: React.FC<{
   const [receiptConfig, setReceiptConfig] = useState<ReceiptPrintConfig>(defaultReceiptConfig);
   const [receiptConfigEmployeeId, setReceiptConfigEmployeeId] = useState<string | null>(null);
   const [savingReceiptConfig, setSavingReceiptConfig] = useState(false);
+  // Trackea qué campos del modal "Configurar Recibo" fueron editados manualmente
+  // por el admin durante la sesión actual. Al guardar, esos campos quedan con
+  // `manualOverride: true` y ya no se sobreescriben con el cálculo automático.
+  const [editedReceiptFields, setEditedReceiptFields] = useState<Set<string>>(new Set());
 
   // Estados para Recibo 2 (Prorrateo)
   const [activeTab, setActiveTab] = useState<'lottt' | 'prorrateo'>('lottt');
@@ -436,14 +442,25 @@ const PayrollProcessor: React.FC<{
   const handleSaveReceiptConfig = async () => {
     setSavingReceiptConfig(true);
     try {
+      // Antes de guardar: para cada campo editado manualmente en esta sesión,
+      // marcamos manualOverride=true. Así el cálculo automático posterior
+      // (buildAttendanceDrivenReceiptConfig) respetará los valores del admin
+      // y no los sobreescribirá con los derivados de asistencia.
+      const configToSave: any = { ...receiptConfig };
+      editedReceiptFields.forEach(key => {
+        if (configToSave[key]) {
+          configToSave[key] = { ...configToSave[key], manualOverride: true };
+        }
+      });
+
       if (receiptConfigEmployeeId) {
         const { error } = await supabase
           .from('empleados')
-          .update({ receipt_print_config: receiptConfig })
+          .update({ receipt_print_config: configToSave })
           .eq('id', receiptConfigEmployeeId);
 
         if (error) throw error;
-        setEmployees(prev => prev.map(emp => emp.id === receiptConfigEmployeeId ? { ...emp, receipt_print_config: receiptConfig } : emp));
+        setEmployees(prev => prev.map(emp => emp.id === receiptConfigEmployeeId ? { ...emp, receipt_print_config: configToSave } : emp));
       } else {
         if (!config?.id) {
           setShowConfigModal(false);
@@ -452,7 +469,7 @@ const PayrollProcessor: React.FC<{
         const { error } = await supabase
           .from('configuracion_global')
           .update({
-            receipt_print_config: receiptConfig,
+            receipt_print_config: configToSave,
             updated_at: new Date().toISOString(),
           })
           .eq('id', config.id);
@@ -461,7 +478,8 @@ const PayrollProcessor: React.FC<{
         // Refresco instantáneo para evitar recargar la página
         if (onConfigUpdated) onConfigUpdated();
       }
-      
+
+      setEditedReceiptFields(new Set());
       setShowConfigModal(false);
       alert('Configuración del recibo guardada.');
     } catch (error) {
@@ -693,12 +711,20 @@ const PayrollProcessor: React.FC<{
     const tieneAdelanto = empAdelantos.some(a => a.tipo === 'adelanto_nomina');
     const tienePrestamo = empAdelantos.some(a => a.tipo === 'prestamo_credito');
 
-    const withAutoValues = (key: keyof ReceiptPrintConfig, cantidad: number, montoUnitario: number) => ({
-      ...baseConfig[key],
-      enabled: cantidad > 0,
-      cantidad,
-      montoUnitario,
-    });
+    // Si el campo tiene `manualOverride: true`, respeta el valor del admin.
+    // Si no, sobreescribe con el cálculo automático desde asistencia.
+    const withAutoValues = (key: keyof ReceiptPrintConfig, cantidad: number, montoUnitario: number) => {
+      const base = baseConfig[key] as any;
+      if (base?.manualOverride) {
+        return base;
+      }
+      return {
+        ...base,
+        enabled: cantidad > 0,
+        cantidad,
+        montoUnitario,
+      };
+    };
 
     // diasLaborados / diasDescanso: cantidad fija desde baseConfig (lo que el admin
     // configuró). montoUnitario = salarioDiario actualizado al período. enabled = true
@@ -978,9 +1004,9 @@ const PayrollProcessor: React.FC<{
     if (effectiveConfig.domingoLaborado?.enabled) addRow("Domingo laborado", fmtBs(cDomLab.total), cDomLab.total, null);
     if (effectiveConfig.horasExtrasDiurnas?.enabled) addRow("Bono extra diurno", fmtBs(cExtDiur.total), cExtDiur.total, null);
     if (effectiveConfig.feriadosLaborados?.enabled) addRow("Feriado laborado", fmtBs(cFerLab.total), cFerLab.total, null);
-    if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono por Jornada Nocturna Art 117", fmtBs(cBonoNoc.total), cBonoNoc.total, null);
+    if (effectiveConfig.bonoNocturno?.enabled) addRow("Jornada Nocturna Art 117", fmtBs(cBonoNoc.total), cBonoNoc.total, null);
     if (effectiveConfig.turnosLaborados?.enabled) addRow("Turnos laborados", fmtBs(cTurnos.total), cTurnos.total, null);
-    if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Bono jornada mixta", fmtBs(cBonoMix.total), cBonoMix.total, null);
+    if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Jornada Mixta", fmtBs(cBonoMix.total), cBonoMix.total, null);
     if (effectiveConfig.horasExtrasNocturnas?.enabled) addRow("Bono extra nocturno", fmtBs(cExtNoc.total), cExtNoc.total, null);
     if (effectiveConfig.diasCompensatorios?.enabled) addRow("Dias compensatorios", fmtBs(cCompens.total), cCompens.total, null);
     if (effectiveConfig.sabadoLaborado?.enabled) addRow("Sabado laborado", fmtBs(cSabLab.total), cSabLab.total, null);
@@ -1374,22 +1400,11 @@ const PayrollProcessor: React.FC<{
     pdf.text("DATOS DEL BENEFICIARIO", 20, offsetY + 45);
     pdf.setFont("helvetica", "normal");
 
-    const filtroSucursalActivo = !!selectedBranchId;
-    const empresaHeader = filtroSucursalActivo
-      ? (emp.sucursales?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.')
-      : (principalBranch?.nombre_id || 'FarmaNomina C.A.');
-    const rifHeader = filtroSucursalActivo
-      ? (emp.sucursales?.rif || principalBranch?.rif || 'J-12345678-9')
-      : (principalBranch?.rif || 'J-12345678-9');
+    // Una sola empresa: la sucursal donde el empleado realmente labora.
+    const empresaHeader = emp.sucursales?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.';
+    const rifHeader = emp.sucursales?.rif || principalBranch?.rif || 'J-12345678-9';
 
     pdf.text(`Empresa: ${empresaHeader} - RIF: ${rifHeader}`, 20, offsetY + 50);
-
-    if (!filtroSucursalActivo && emp.sucursales?.nombre_id) {
-      pdf.setFontSize(9);
-      pdf.text(`Sucursal: ${emp.sucursales.nombre_id} - RIF: ${emp.sucursales.rif || ''}`, 20, offsetY + 55);
-      pdf.line(20, offsetY + 56, 195, offsetY + 56);
-      pdf.setFontSize(10);
-    }
 
     pdf.text(`Nombres y Apellidos: ${emp.nombre} ${emp.apellido}`, 20, offsetY + 58);
     pdf.text(`Cédula de Identidad: V-${emp.cedula}`, 120, offsetY + 58);
@@ -1565,8 +1580,15 @@ const PayrollProcessor: React.FC<{
 
     let y = 40;
     doc.setFontSize(9);
-    doc.text(`EMPRESA: ${principalBranch?.nombre_id || 'FarmaNomina C.A.'}`, marginLeft, y);
-    doc.text(`RIF: ${principalBranch?.rif || 'J-12345678-9'}`, marginRight, y, { align: "right" });
+    // Si hay filtro de sucursal activo, mostramos esa sucursal en el encabezado;
+    // si no, cae a la sucursal principal.
+    const sucHeader = selectedBranchId
+      ? branches.find(b => b.id === selectedBranchId)
+      : principalBranch;
+    const empresaHeader = sucHeader?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.';
+    const rifHeader = sucHeader?.rif || principalBranch?.rif || 'J-12345678-9';
+    doc.text(`EMPRESA: ${empresaHeader}`, marginLeft, y);
+    doc.text(`RIF: ${rifHeader}`, marginRight, y, { align: "right" });
     y += 5;
     doc.text(`Período: ${fechaDesde} al ${fechaHasta}`, marginRight, y, { align: "right" });
     y += 7;
@@ -1679,9 +1701,9 @@ const PayrollProcessor: React.FC<{
       if (effectiveConfig.domingoLaborado?.enabled) addRow("Domingo laborado", fmtBs(cDomLab.total), cDomLab.total, null);
       if (effectiveConfig.horasExtrasDiurnas?.enabled) addRow("Bono extra diurno", fmtBs(cExtDiur.total), cExtDiur.total, null);
       if (effectiveConfig.feriadosLaborados?.enabled) addRow("Feriado laborado", fmtBs(cFerLab.total), cFerLab.total, null);
-      if (effectiveConfig.bonoNocturno?.enabled) addRow("Bono por Jornada Nocturna Art 117", fmtBs(cBonoNoc.total), cBonoNoc.total, null);
+      if (effectiveConfig.bonoNocturno?.enabled) addRow("Jornada Nocturna Art 117", fmtBs(cBonoNoc.total), cBonoNoc.total, null);
       if (effectiveConfig.turnosLaborados?.enabled) addRow("Turnos laborados", fmtBs(cTurnos.total), cTurnos.total, null);
-      if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Bono jornada mixta", fmtBs(cBonoMix.total), cBonoMix.total, null);
+      if (effectiveConfig.bonoJornadaMixta?.enabled) addRow("Jornada Mixta", fmtBs(cBonoMix.total), cBonoMix.total, null);
       if (effectiveConfig.horasExtrasNocturnas?.enabled) addRow("Bono extra nocturno", fmtBs(cExtNoc.total), cExtNoc.total, null);
       if (effectiveConfig.diasCompensatorios?.enabled) addRow("Dias compensatorios", fmtBs(cCompens.total), cCompens.total, null);
       if (effectiveConfig.sabadoLaborado?.enabled) addRow("Sabado laborado", fmtBs(cSabLab.total), cSabLab.total, null);
@@ -1762,8 +1784,14 @@ const PayrollProcessor: React.FC<{
 
     let y = 40;
     doc.setFontSize(9);
-    doc.text(`EMPRESA: ${principalBranch?.nombre_id || 'FarmaNomina C.A.'}`, marginLeft, y);
-    doc.text(`RIF: ${principalBranch?.rif || 'J-12345678-9'}`, marginRight, y, { align: "right" });
+    // Si hay filtro de sucursal activo, mostramos esa sucursal; si no, la principal.
+    const sucHeader2 = selectedBranchId
+      ? branches.find(b => b.id === selectedBranchId)
+      : principalBranch;
+    const empresaHeader2 = sucHeader2?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.';
+    const rifHeader2 = sucHeader2?.rif || principalBranch?.rif || 'J-12345678-9';
+    doc.text(`EMPRESA: ${empresaHeader2}`, marginLeft, y);
+    doc.text(`RIF: ${rifHeader2}`, marginRight, y, { align: "right" });
     y += 5;
     doc.text(`Período: ${fechaDesde} al ${fechaHasta}`, marginRight, y, { align: "right" });
     y += 4;
@@ -1883,8 +1911,11 @@ const PayrollProcessor: React.FC<{
 
     doc.setFontSize(8);
     doc.setFont("helvetica", "normal");
-    const empresa = principalBranch?.nombre_id || 'FarmaNomina C.A.';
-    const rif = principalBranch?.rif || 'J-12345678-9';
+    const sucHeaderPL = selectedBranchId
+      ? branches.find(b => b.id === selectedBranchId)
+      : principalBranch;
+    const empresa = sucHeaderPL?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.';
+    const rif = sucHeaderPL?.rif || principalBranch?.rif || 'J-12345678-9';
     doc.text(`Empresa: ${empresa}  |  RIF: ${rif}`, 15, 28);
     const startDay = periodo === 'Q1' ? 1 : 16;
     const endDay = periodo === 'Q1' ? 15 : new Date(selectedYear, selectedMonth + 1, 0).getDate();
@@ -1984,8 +2015,11 @@ const PayrollProcessor: React.FC<{
 
     doc.setFontSize(8);
     doc.setFont("helvetica", "normal");
-    const empresa = principalBranch?.nombre_id || 'FarmaNomina C.A.';
-    const rif = principalBranch?.rif || 'J-12345678-9';
+    const sucHeaderPL2 = selectedBranchId
+      ? branches.find(b => b.id === selectedBranchId)
+      : principalBranch;
+    const empresa = sucHeaderPL2?.nombre_id || principalBranch?.nombre_id || 'FarmaNomina C.A.';
+    const rif = sucHeaderPL2?.rif || principalBranch?.rif || 'J-12345678-9';
     doc.text(`Empresa: ${empresa}  |  RIF: ${rif}`, 15, 28);
     const startDay = periodo === 'Q1' ? 1 : 16;
     const endDay = periodo === 'Q1' ? 15 : new Date(selectedYear, selectedMonth + 1, 0).getDate();
@@ -2572,6 +2606,7 @@ const PayrollProcessor: React.FC<{
               <table className="w-full text-sm">
                 <thead className="bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest sticky top-0">
                   <tr>
+                    <th className="px-2 py-2 text-center w-10">#</th>
                     <th className="px-3 py-2 text-left">Cédula</th>
                     <th className="px-3 py-2 text-left">Nombre y Apellido</th>
                     <th className="px-3 py-2 text-center">Faltas</th>
@@ -2580,13 +2615,16 @@ const PayrollProcessor: React.FC<{
                   </tr>
                 </thead>
                 <tbody className="divide-y text-xs font-semibold text-slate-800">
-                  {getCestaListEmpleados().map(emp => {
+                  {getCestaListEmpleados().map((emp, idx) => {
                     const { faltas } = calcularCestaticketEmpleado(emp);
                     const usdStr = cestaListUsd[emp.id] ?? '0';
                     const usdNum = parseFloat(usdStr) || 0;
                     const bsNum = usdNum * (Number(config.tasa_bcv) || 0);
                     return (
                       <tr key={emp.id} className="hover:bg-slate-50">
+                        <td className="px-2 py-2 text-center">
+                          <span className="text-slate-400 tabular-nums">{idx + 1}</span>
+                        </td>
                         <td className="px-3 py-2">{emp.cedula}</td>
                         <td className="px-3 py-2">{emp.nombre} {emp.apellido}</td>
                         <td className="px-3 py-2 text-center">{faltas > 0 ? <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-md font-black">{faltas}</span> : <span className="text-slate-400">0</span>}</td>
@@ -2927,7 +2965,7 @@ const PayrollProcessor: React.FC<{
                     domingoLaborado: { label: "Adicional por domingo lab Art 119-120", unit: "días" },
                     horasExtrasDiurnas: { label: "Hora(s) Extras Diurnas", unit: "horas" },
                     feriadosLaborados: { label: "Adicional por feriados lab Art 119-120", unit: "días" },
-                    bonoNocturno: { label: "Bono por Jornada Nocturna Art 117", unit: "horas" },
+                    bonoNocturno: { label: "Jornada Nocturna Art 117", unit: "horas" },
                     bonoJornadaMixta: { label: "Bono por Jornada Mixta Art 117/173-3", unit: "horas" },
                     horasExtrasNocturnas: { label: "Hora(s) Extras Nocturnas", unit: "horas" },
                     otrasAsignaciones: { label: "Otras Asignaciones", unit: "cant" },
@@ -2954,22 +2992,26 @@ const PayrollProcessor: React.FC<{
                       <tr key={key} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3">{configItem.label}</td>
                         <td className="px-4 py-3 text-center">
-                          <input type="checkbox" checked={item.enabled} className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer" onChange={e => setReceiptConfig(prev => ({ ...prev, [key]: { ...item, enabled: e.target.checked } }))} />
+                          <input type="checkbox" checked={item.enabled} className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer" onChange={e => {
+                            setEditedReceiptFields(prev => new Set(prev).add(key));
+                            setReceiptConfig(prev => ({ ...prev, [key]: { ...item, enabled: e.target.checked } }));
+                          }} />
                         </td>
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-1">
-                             <input 
-                               type="number" 
-                               step="0.01" 
-                               className={`w-16 p-1.5 border border-slate-300 rounded-lg text-center outline-none transition-all ${isQtyReadOnly ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-slate-700'}`} 
-                               value={item.cantidad === 0 && !isQtyReadOnly ? '' : (item.cantidad ?? '')} 
-                               placeholder={isQtyReadOnly ? "-" : "0"} 
+                             <input
+                               type="number"
+                               step="0.01"
+                               className={`w-16 p-1.5 border border-slate-300 rounded-lg text-center outline-none transition-all ${isQtyReadOnly ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-slate-700'}`}
+                               value={item.cantidad === 0 && !isQtyReadOnly ? '' : (item.cantidad ?? '')}
+                               placeholder={isQtyReadOnly ? "-" : "0"}
                                readOnly={isQtyReadOnly}
-                               onChange={e => { 
+                               onChange={e => {
                                  if (isQtyReadOnly) return;
-                                 const val = e.target.value; 
-                                 setReceiptConfig(prev => ({ ...prev, [key]: { ...item, cantidad: val === '' ? 0 : parseFloat(val) } })) 
-                               }} 
+                                 const val = e.target.value;
+                                 setEditedReceiptFields(prev => new Set(prev).add(key));
+                                 setReceiptConfig(prev => ({ ...prev, [key]: { ...item, cantidad: val === '' ? 0 : parseFloat(val) } }))
+                               }}
                              />
                              <span className="text-[10px] text-slate-500 font-bold uppercase w-8 text-left">({configItem.unit})</span>
                           </div>
@@ -2988,9 +3030,19 @@ const PayrollProcessor: React.FC<{
 
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => {
+                // Restablecer: limpiar overrides manuales y recalcular desde asistencia.
+                setEditedReceiptFields(new Set());
                 if (receiptConfigEmployeeId) {
                   const emp = employees.find(e => e.id === receiptConfigEmployeeId);
-                  if (emp) { setReceiptConfig(buildAttendanceDrivenReceiptConfig(emp)); return; }
+                  if (emp) {
+                    // Limpiar manualOverride en el config recalculado
+                    const fresh = buildAttendanceDrivenReceiptConfig(emp);
+                    const cleaned = Object.fromEntries(
+                      Object.entries(fresh).map(([k, v]: [string, any]) => [k, { ...v, manualOverride: false }])
+                    ) as ReceiptPrintConfig;
+                    setReceiptConfig(cleaned);
+                    return;
+                  }
                 }
                 setReceiptConfig(defaultReceiptConfig);
               }} className="px-5 py-3 bg-slate-100 rounded-xl text-slate-700 font-bold">Restablecer</button>
@@ -3088,6 +3140,7 @@ const PayrollProcessor: React.FC<{
                <button onClick={() => {
                  setReceiptConfigEmployeeId(null);
                  setReceiptConfig(config?.receipt_print_config ? normalizeReceiptPrintConfig(config.receipt_print_config) : defaultReceiptConfig);
+                 setEditedReceiptFields(new Set());
                  setShowConfigModal(true);
                }} className="bg-white border border-slate-200 text-slate-700 px-2 sm:px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-slate-100 transition-colors flex items-center gap-1 whitespace-nowrap">
                  <span>⚙️</span> Configurar
@@ -3169,6 +3222,7 @@ const PayrollProcessor: React.FC<{
                   }}
                 />
               </th>
+              <th className="px-3 py-4 text-center w-10">#</th>
               <th className="px-6 py-4">Empleado</th>
               <th className="px-6 py-4 text-center">Saldo Préstamos</th>
               <th className="px-6 py-4 text-center">Asignaciones</th>
@@ -3204,7 +3258,7 @@ const PayrollProcessor: React.FC<{
                 if (sortField === 'deducciones') return dir * (bA.totalDeducciones - bB.totalDeducciones);
                 if (sortField === 'neto') return dir * (bA.neto - bB.neto);
                 return 0;
-            }).map(emp => {
+            }).map((emp, idx) => {
                 if (!config) return null;
 
                 const snapshot = nominasCerradas.find(n => n.empleado_id === emp.id);
@@ -3226,6 +3280,9 @@ const PayrollProcessor: React.FC<{
                         onChange={() => setExcludedEmployees(prev => ({ ...prev, [emp.id]: !isExcluded }))}
                         title={isExcluded ? 'Incluir en recibos' : 'Excluir de recibos'}
                       />
+                    </td>
+                    <td className="px-3 py-4 text-center">
+                      <span className="text-xs font-black text-slate-400 tabular-nums">{idx + 1}</span>
                     </td>
                     <td className="px-6 py-4 cursor-pointer group/name" onClick={() => setSelectedDetailEmployeeId(emp.id)}>
                         <div className="font-bold text-slate-700 group-hover/name:text-emerald-600 transition-colors">{emp.nombre} {emp.apellido}</div>
@@ -3289,6 +3346,7 @@ const PayrollProcessor: React.FC<{
                             setReceiptConfigEmployeeId(emp.id);
                             const hasSaved = emp.receipt_print_config && Object.keys(emp.receipt_print_config).length > 0;
                             setReceiptConfig(hasSaved ? normalizeReceiptPrintConfig(emp.receipt_print_config) : buildAttendanceDrivenReceiptConfig(emp));
+                            setEditedReceiptFields(new Set());
                             setShowConfigModal(true);
                           }}
                           className="flex items-center gap-1 px-2 sm:px-3 py-2 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 hover:text-slate-800 transition-all text-[10px] font-bold whitespace-nowrap"
@@ -3600,6 +3658,7 @@ const PayrollProcessor: React.FC<{
     });
     setExcludedEmployees(newExcluded);
 }} checked={empHoursData.length > 0 && empHoursData.every(({emp}) => excludedEmployees[emp.id])} /></th>
+                      <th className="px-3 py-4 text-center w-10">#</th>
                       <th className="px-6 py-4">Empleado</th>
                       <th className="px-6 py-4 text-center">Configuración Pote</th>
                       <th className="px-6 py-4 text-center">Horas Laboradas</th>
@@ -3611,7 +3670,7 @@ const PayrollProcessor: React.FC<{
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {empHoursData.map(({ emp, totalHrs }) => {
+                    {empHoursData.map(({ emp, totalHrs }, idx) => {
                        // Lógica individual
                        const baseIndBs = montoIndicador[emp.id] || 0;
                        const baseIndUsd = baseIndBs / tasa;
@@ -3649,6 +3708,9 @@ const PayrollProcessor: React.FC<{
                                 checked={isExcluded}
                                 onChange={(e) => setExcludedEmployees(prev => ({...prev, [emp.id]: e.target.checked}))}
                               />
+                           </td>
+                           <td className="px-3 py-4 text-center">
+                              <span className="text-xs font-black text-slate-400 tabular-nums">{idx + 1}</span>
                            </td>
                            <td className="px-6 py-4">
                              <div className="font-bold text-slate-700">{emp.nombre} {emp.apellido}</div>
